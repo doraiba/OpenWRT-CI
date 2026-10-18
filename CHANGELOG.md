@@ -60,6 +60,36 @@
   `NetWiz-AUTO.yml`、`WRT-BUILD.yml`
 - `README.md`、`CHANGELOG.md`
 
+### 验证结果（实测 run）
+
+- `H5000M-WIFI-YES` / MT5700（run 39097823286）：6m37s 通过，导出 29 个 `=y` 符号零丢失。
+- `H5000M-WIFI-YES-NETMONITOR` / MT5700（run 39098572189）：6m50s 通过，导出 32 个 `=y`
+  符号零丢失；`luci-app-dockerman` / `dockerd` / `netmonitor` / `taygedo` / `mt5700` /
+  `h5000m-fancontrol` / `kmod-cryptodev` / `kmod-tls` / `easytier` / `homeproxy` 均选中，
+  机型为 `CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_hiveton_h5000m=y`。
+  结论：6.18 → 6.12 的内核落差没有丢弃任何现有配置符号。
+
+## [2026-10-18] 缩小自动编译范围：仅保留 H5000M 两条定时任务
+
+### 背景
+
+`Auto-Clean` 每日 21:00 UTC 运行，完成后通过 `workflow_run` 连带触发全部 `*-AUTO`
+工作流，合计约 13 条编译/天（H5000M 母配置、H5000M-NETMONITOR、AP3000M、X86、
+FM350×3、NetWiz×6）。用户当前只使用 H5000M，其余机型与变体的每日产物无实际用途，
+持续消耗 CI 时间与缓存配额。
+
+### 改动
+
+- `AP3000M-MT-AUTO.yml`、`X86-MT-AUTO.yml`、`FM350-AUTO.yml`、`NetWiz-AUTO.yml`：
+  注释掉 `on.workflow_run` 段，**只保留 `workflow_dispatch` 手动入口**，文件与矩阵定义
+  一字未删。
+- `H5000M-MT-AUTO.yml`、`H5000M-NETMONITOR-AUTO.yml`：保持不变，继续随「自动清理」自动编译。
+- 效果：每日自动编译由 13 条降为 2 条。
+
+### 回滚方式
+
+把上述四个文件里 `on:` 下注释掉的 `workflow_run` 段取消注释即可恢复定时编译。
+
 ## [2026-10-17] MT5700 相关配置补齐 Docker：H5000M / AP3000M 也内置 luci-app-dockerman
 
 ### 背景

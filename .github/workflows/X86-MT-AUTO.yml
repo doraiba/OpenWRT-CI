@@ -10,11 +10,12 @@
 name: X86 定时编译（MT 双配置）
 
 on:
-  # Auto-Clean 完成后自动触发
-  workflow_run:
-    workflows: ["自动清理"]
-    types:
-      - completed
+  # 2026-10-18 起关闭定时触发：X86 不在当前使用范围内，不再随「自动清理」
+  # 每日自动编译（仅保留下方手动入口）。需要恢复时把 workflow_run 段取消注释即可。
+  # workflow_run:
+  #   workflows: ["自动清理"]
+  #   types:
+  #     - completed
   # 手动编译
   workflow_dispatch:
     inputs:
