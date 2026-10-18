@@ -332,6 +332,37 @@ AP3000M|AP3000M-*)
 esac
 
 
+#Podman 容器网络首次启动初始化（仅 H5000M 自用配置）
+# 条件为 contains NETMONITOR：podman 只出现在 Config/H5000M-WIFI-YES-NETMONITOR.txt，
+# 其余机型与 FM350 / NetWiz 变体不执行本段，既有构建路径零影响。
+#
+# 解决的是「装上了但跑不起来」：netavark 默认防火墙驱动是 iptables，进程会直接
+# exec /usr/sbin/iptables 写 NAT 规则，而 ImmortalWrt 25.12 是纯 nftables（fw4），
+# 镜像里没有 iptables 二进制，于是 podman run 第一步就失败：
+#   Error: netavark: iptables: No such file or directory (os error 2)
+# 紧接着还有 aardvark-dns 要 bind 10.88.0.1:53、与 dnsmasq 抢端口的问题。
+# 两处都由 files/etc/uci-defaults/98-podman-network 在首次开机修好，用户无需手工
+# 改 containers.conf / uci。
+#
+# 位置：files/ overlay 必须在本步（编译前）就位，故与上面的 EEPROM 注入同段。
+case "$WRT_CONFIG" in
+*NETMONITOR*)
+	PODMAN_UD_SRC="$GITHUB_WORKSPACE/Scripts/podman/98-podman-network"
+	WRT_FILES="$PKG_PATH/../files"
+
+	if [ -f "$PODMAN_UD_SRC" ]; then
+		echo " "
+		mkdir -p "$WRT_FILES/etc/uci-defaults/"
+		cp -f "$PODMAN_UD_SRC" "$WRT_FILES/etc/uci-defaults/98-podman-network"
+		chmod +x "$WRT_FILES/etc/uci-defaults/98-podman-network"
+		echo "Podman network uci-defaults injected!"
+	else
+		echo "ERROR: $PODMAN_UD_SRC not found; podman 容器网络将无法初始化（netavark 缺 iptables）!" >&2
+		exit 1
+	fi
+	;;
+esac
+
 #修复 dockerd 在 CI runner 上的构建失败
 # 根因：moby 的 hack/make/binary-daemon 中 copy_binaries() 在宿主已安装 docker
 # （存在 /usr/local/bin/runc）且同架构时，会尝试从宿主 PATH 拷贝

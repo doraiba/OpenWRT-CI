@@ -557,7 +557,7 @@ jobs:
       # 由 ApplyMTMode 叠加，不内嵌在配置文件里）。若手动构建错配 MT Mode
       # （选了本配置却把 MT Mode 留空 / 选成 MT5700M），这里立即拦截，避免
       # 产出缺少 MT5700 模组功能的名不副实固件。
-      - name: 校验 luci-app-netmonitor / luci-app-taygedo 已选中
+      - name: 校验 luci-app-netmonitor / luci-app-podman / luci-app-taygedo 已选中
         if: contains(env.WRT_CONFIG, 'NETMONITOR')
         run: |
           cd ./wrt/
@@ -584,13 +584,43 @@ jobs:
             exit 1
           fi
 
+          # podman 前端 / 后端分开断言：luci-app-podman 的 Makefile 把 podman 只写进
+          # PKG_BUILD_DEPENDS，LUCI_DEPENDS 里没有 +podman，所以后端不会随前端自动
+          # 拉入。只断言前端会漏掉「界面能打开、点进去 502」这种半残状态。
+          if [ ! -d ./package/luci-app-podman ]; then
+            echo "::error::package/luci-app-podman 不存在：Packages.sh 的 NETMONITOR 分支未执行或 clone 失败"
+            exit 1
+          fi
+
+          if ! grep -qx 'CONFIG_PACKAGE_luci-app-podman=y' ./.config; then
+            echo "::error::.config 未选中 luci-app-podman：包是否在 make defconfig 之前就位？"
+            grep -i 'podman' ./.config || echo "（.config 中无任何 podman 相关行）"
+            exit 1
+          fi
+
+          if ! grep -qx 'CONFIG_PACKAGE_podman=y' ./.config; then
+            echo "::error::.config 未选中 podman 后端：前端 LUCI_DEPENDS 不含 +podman，必须在配置层显式选中"
+            grep -i 'podman' ./.config || echo "（.config 中无任何 podman 相关行）"
+            exit 1
+          fi
+
+          # 容器网络的首次启动初始化（netavark 强制 nftables 驱动 + dnsmasq 让出
+          # 10.88.0.1:53）。由 Handles.sh 注入 files/ overlay：丢了照样编译全绿，
+          # 只在设备上表现为「podman run 报 iptables: No such file or directory」，
+          # 属于最难查的一类，因此在下载与编译之前硬断言。
+          if [ ! -x ./files/etc/uci-defaults/98-podman-network ]; then
+            echo "::error::files/etc/uci-defaults/98-podman-network 缺失或不可执行：Handles.sh 的 Podman 段未执行"
+            ls -l ./files/etc/uci-defaults/ 2>/dev/null || echo "（./files/etc/uci-defaults 目录不存在）"
+            exit 1
+          fi
+
           if ! grep -qx 'CONFIG_PACKAGE_luci-app-mt5700=y' ./.config; then
             echo "::error::配置 $WRT_CONFIG 固定使用 MT_MODE=MT5700，但 .config 未选中 luci-app-mt5700（手动构建时 MT Mode 是否错配？）"
             grep -i 'mt5700' ./.config || echo "（.config 中无任何 mt5700 相关行）"
             exit 1
           fi
 
-          echo "luci-app-netmonitor / luci-app-taygedo 已就位且已被 .config 选中（MT5700 方案一致）"
+          echo "luci-app-netmonitor / luci-app-podman（含后端与容器网络初始化）/ luci-app-taygedo 已就位且已被 .config 选中（MT5700 方案一致）"
 
       - name: 预下载源码包
         if: env.WRT_TEST != 'true'

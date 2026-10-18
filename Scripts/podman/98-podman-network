@@ -1,0 +1,56 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Podman 容器网络首次启动初始化（仅注入到 H5000M 自用配置的固件）
+#
+# 由 Scripts/Handles.sh 复制到 files/etc/uci-defaults/98-podman-network，
+# 首次开机执行一次，退出码为 0 时脚本自身被删除。
+#
+# 这里处理两个「开箱必踩」的问题（参考 openwrt/packages#25730）：
+#
+# 1) netavark 默认防火墙驱动是 iptables，它会直接 exec /usr/sbin/iptables 写 NAT
+#    规则。ImmortalWrt 25.12 走 fw4（纯 nftables），镜像里既没有 iptables 也没有
+#    iptables-nft 二进制（配置层只有 kmod-nft-*），于是第一条规则就失败：
+#      Error: netavark: iptables: No such file or directory (os error 2)
+#    这里强制改用 netavark 原生的 nftables 驱动（内部调 `nft -j`，fw4 依赖的
+#    nftables-json 已提供该能力）。规则落在独立的 inet netavark 表，与 fw4 的
+#    inet fw4 互不干扰。
+#    用 containers.conf.d/ 片段而不是直接改 /etc/containers/containers.conf：
+#    前者优先、且不会被包升级覆盖。
+#
+# 2) aardvark-dns 要 bind 10.88.0.1:53（podman 默认网络的网关地址），而 dnsmasq
+#    默认监听所有已配置地址的 53 端口，两者撞车：
+#      aardvark-dns failed to start: failed to bind udp listener on 10.88.0.1:53
+#      : IO error: Address in use (os error 98)
+#    把 podman0 加进 dnsmasq 的 notinterface 名单，让 dnsmasq 让出该地址。
+#    podman0 此刻通常还不存在，dnsmasq 对不存在的接口名直接忽略，无副作用。
+
+[ -x /usr/bin/podman ] || exit 0
+
+CONF_DIR=/etc/containers/containers.conf.d
+CONF_FILE="$CONF_DIR/50-netavark-nftables.conf"
+
+# 幂等：每次引导都重写成同一内容（sysupgrade 保留 /etc 后本脚本可能再次执行）
+mkdir -p "$CONF_DIR"
+printf '%s\n' '[network]' 'firewall_driver = "nftables"' > "$CONF_FILE"
+echo "podman: netavark firewall_driver=nftables -> $CONF_FILE"
+
+# dnsmasq 让出 podman0（不再监听该接口上任何地址的 53）
+if uci -q get dhcp.@dnsmasq[0] >/dev/null 2>&1; then
+	if ! uci -q get dhcp.@dnsmasq[0].notinterface | grep -qx 'podman0'; then
+		uci add_list dhcp.@dnsmasq[0].notinterface='podman0'
+		uci commit dhcp
+		/etc/init.d/dnsmasq restart >/dev/null 2>&1
+		echo "podman: dnsmasq 已排除 podman0（notinterface）"
+	fi
+fi
+
+# 容器出网依赖转发。路由器上通常已是 1，仅在确为 0 时补一条持久化配置，
+# 不改动既有转发策略（mwan3 / 5G 拨号等场景不受影响）。
+if [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = "0" ]; then
+	echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-podman-forward.conf
+	sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
+	echo "podman: 已开启 ip_forward"
+fi
+
+exit 0

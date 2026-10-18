@@ -147,6 +147,24 @@ case "${WRT_CONFIG:-}" in
 H5000M*) INSTALL_OPENAPPFILTER ;;
 esac
 
+# ===== luci-app-podman（Podman 容器管理前端，仅 H5000M 自用配置）=====
+# 符号写在 Config/H5000M-WIFI-YES-NETMONITOR.txt；取包同样只在 WRT_CONFIG 含
+# NETMONITOR 时执行，其它机型 / 变体的 package/ 树里不会多出该包。
+#
+# 上游 Zerogiven-OpenWRT-Packages/luci-app-podman 根目录即包（Makefile 在根，
+# PKG_NAME=luci-app-podman），clone 到 package/luci-app-podman 就是标准 LuCI 包
+# 目录，无需搬移或重命名。
+#
+# 后端 podman 由 packages feed 的 utils/podman 提供，本仓库只导入前端；前端
+# Makefile 把 podman 写在 PKG_BUILD_DEPENDS（构建期依赖）而非 LUCI_DEPENDS，
+# 所以配置层必须显式选中 CONFIG_PACKAGE_podman，否则只会装一个点不开的空界面。
+case "${WRT_CONFIG:-}" in
+*NETMONITOR*)
+	rm -rf ./luci-app-podman
+	UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main"
+	;;
+esac
+
 UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
 UPDATE_PACKAGE "diskman" "sbwml/luci-app-diskman" "main"
 UPDATE_PACKAGE "diskmanager" "4IceG/luci-app-mini-diskmanager" "main"
@@ -450,8 +468,7 @@ SETUP_RUST_FOR_MT5700() {
 	rustup target add "$RUST_TARGET" >/dev/null 2>&1 || true
 	echo "luci-app-mt5700: rustup ready, target=$RUST_TARGET"
 
-	# 让后续 GitHub Actions 步骤（尤其 Compile Firmware）能找到 cargo，
-	# 并带上与 MT5700M FOLD 相同的 rust-lld 交叉链接参数。
+	# 让后续 GitHub Actions 步骤（尤其 Compile Firmware）能找到 cargo。
 	# PATH 只能通过 GITHUB_PATH 追加；不要写入 GITHUB_ENV 的 PATH（会整段覆盖）。
 	if [ -n "${GITHUB_PATH:-}" ]; then
 		echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
@@ -459,7 +476,38 @@ SETUP_RUST_FOR_MT5700() {
 	if [ -n "${GITHUB_ENV:-}" ]; then
 		echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
 		echo "RUSTUP_HOME=$HOME/.rustup" >> "$GITHUB_ENV"
-		echo "RUSTFLAGS=-C link-self-contained=yes -C linker=rust-lld" >> "$GITHUB_ENV"
+	fi
+
+	# ⚠️ 交叉链接参数只作用于本包的 cargo，**绝不能**写全局 RUSTFLAGS。
+	#
+	# 历史做法是 echo "RUSTFLAGS=-C link-self-contained=yes -C linker=rust-lld"
+	# 进 GITHUB_ENV，让后续「编译固件」步骤继承。这在只有 luci-app-mt5700
+	# 一个 Rust 消费者时没问题，但一旦配置里出现 feeds 的 Rust 包
+	# （podman 的 netavark / aardvark-dns 就是），全局 RUSTFLAGS 会一并作用到
+	# package/feeds/packages/rust/host：宿主 target 下 rust-lld 找不到
+	# -lgcc_s / -lutil / -lrt / -lpthread / -lm / -ldl / -lc，报
+	#   error: linking with `rust-lld` failed: exit status: 1
+	# 于是在编译第 18 分钟死在 rust/host，与 podman 本身无关。
+	#
+	# 也不能改用 src/rust/.cargo/config.toml：luci.mk 的 Build/Prepare 是
+	# `$(CP) ./src/*`，glob 不含隐藏目录，.cargo 不会被拷进 PKG_BUILD_DIR。
+	# 因此这里直接把 env 前缀写进包内 src/Makefile 的 cargo 命令行——
+	# 作用域精确到这一次 cargo 调用，feeds 的 rust/host 完全不受影响。
+	local MK="./luci-app-mt5700/src/Makefile"
+	if [ -f "$MK" ]; then
+		if ! grep -q 'link-self-contained=yes' "$MK"; then
+			sed -i.bak 's|cargo build \$(CARGO_BUILD_STD_FLAGS)|RUSTFLAGS="-C link-self-contained=yes -C linker=rust-lld" cargo build $(CARGO_BUILD_STD_FLAGS)|' "$MK"
+			rm -f "$MK.bak"
+		fi
+		if grep -q 'link-self-contained=yes' "$MK"; then
+			echo "luci-app-mt5700: rust-lld 自包含链接参数已写入包内 src/Makefile（作用域仅限本包）"
+		else
+			echo "ERROR: luci-app-mt5700: 未能在 src/Makefile 中注入 rust-lld 链接参数，交叉编译会失败" >&2
+			exit 1
+		fi
+	else
+		echo "ERROR: luci-app-mt5700: 缺少 src/Makefile，无法注入 rust-lld 链接参数" >&2
+		exit 1
 	fi
 }
 
