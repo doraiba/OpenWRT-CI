@@ -101,6 +101,52 @@ H5000M*)
 	;;
 esac
 
+# ===== OpenAppFilter（OAF，家长控制 / 应用过滤，仅 H5000M 机型）=====
+# 符号同样写在 Config/H5000M-EXTRA.txt，取包也只在 H5000M 下执行。
+#
+# 上游 destan19/OpenAppFilter 的 master 是「三包同仓」，根目录下三个一级目录
+# 各自带 Makefile：
+#   oaf/              → KernelPackage oaf  → 固件内包名 kmod-oaf
+#                       （netfilter 模块：自建连接表 + NF_INET_FORWARD hook，不走
+#                        iptables 规则，因此不依赖 fw4/nftables 的规则链；
+#                        DEPENDS kmod-nf-conntrack + kmod-nf-reject）
+#   open-app-filter/  → Package appfilter （用户态 oafd + init.d + feature.bin 特征库）
+#   luci-app-oaf/     → Package luci-app-oaf（Lua/CBI 前端）
+#
+# 与 feed 的冲突（关键）：immortalwrt/packages 里已有 net/open-app-filter，是旧
+# 快照，其单文件 Makefile 同样定义了 appfilter 与 kmod-oaf 两个包名。两套同名包
+# 共存会让 OpenWrt 报 Duplicate package name，并在 make defconfig 阶段把整组符号
+# 连同依赖一起丢掉 —— 表现为「构建全绿、固件里既没有界面也没有 oafd」。因此必须
+# 先清 feed：
+#   1. 删 ../feeds/packages/net/open-app-filter（旧版源码目录）；
+#   2. 删 ./feeds/packages/open-app-filter（scripts/feeds install 生成的符号链接，
+#      删源后悬空）。
+# 不能改用 UPDATE_PACKAGE 的 pkg/name/all 模式：仓库根目录名（OpenAppFilter）与
+# 三个包目录名互不相同，all 模式在目标目录已存在时会把目录复制进自身（oaf/oaf），
+# 难以幂等复用。
+INSTALL_OPENAPPFILTER() {
+	local REPO="./OpenAppFilter"
+
+	# 1) 清 feed 旧版 + 悬空链接
+	rm -rf ../feeds/packages/net/open-app-filter
+	rm -rf ./feeds/packages/open-app-filter ./feeds/luci/luci-app-oaf
+
+	# 2) 清上次导入残留（保证 cp 不会复制进自身）
+	rm -rf "$REPO" ./oaf ./open-app-filter ./luci-app-oaf
+
+	# 3) 克隆上游并平铺三个一级包目录（set -e 下 clone 失败直接终止，不静默缺包）
+	git clone --depth=1 --single-branch --branch master \
+		https://github.com/destan19/OpenAppFilter.git "$REPO"
+	cp -rf "$REPO/oaf" "$REPO/open-app-filter" "$REPO/luci-app-oaf" ./
+	rm -rf "$REPO"
+
+	echo "OpenAppFilter: oaf(kmod-oaf) / open-app-filter(appfilter) / luci-app-oaf 已就位"
+}
+
+case "${WRT_CONFIG:-}" in
+H5000M*) INSTALL_OPENAPPFILTER ;;
+esac
+
 UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
 UPDATE_PACKAGE "diskman" "sbwml/luci-app-diskman" "main"
 UPDATE_PACKAGE "diskmanager" "4IceG/luci-app-mini-diskmanager" "main"

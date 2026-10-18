@@ -508,7 +508,7 @@ jobs:
       # 防回归：H5000M 专属插件层（Config/H5000M-EXTRA.txt）。这一层靠 WRT_CONFIG
       # 前缀条件追加，追加语句写错或文件缺行都不会报错，只会变成「编译全绿、固件里
       # 没有界面」，因此在下载与编译之前硬断言。
-      - name: 校验 Bandix Plus 已选中（H5000M）
+      - name: 校验 H5000M 专属插件（Bandix Plus / OpenAppFilter）已选中
         if: startsWith(env.WRT_CONFIG, 'H5000M')
         run: |
           cd ./wrt/
@@ -530,7 +530,25 @@ jobs:
             exit 1
           fi
 
-          echo "luci-app-bandix-plus（含 bandix-plus 后端）已就位且已被 .config 选中"
+          # OAF 是「三包同仓」，任何一环没选上都不报错，只会在设备上表现成
+          # 「菜单在、规则不生效」或「菜单都没有」，所以逐包断言。
+          for OAF_DIR in oaf open-app-filter luci-app-oaf; do
+            if [ ! -d "./package/$OAF_DIR" ]; then
+              echo "::error::package/$OAF_DIR 不存在：Packages.sh 的 INSTALL_OPENAPPFILTER 未执行"
+              ls -d ./package/*oaf* ./package/*app-filter* 2>/dev/null || echo "（package/ 下无任何 oaf 相关目录）"
+              exit 1
+            fi
+          done
+
+          for OAF_SYM in kmod-oaf appfilter luci-app-oaf luci-i18n-oaf-zh-cn; do
+            if ! grep -qx "CONFIG_PACKAGE_${OAF_SYM}=y" ./.config; then
+              echo "::error::.config 未选中 $OAF_SYM：feeds 里的旧 open-app-filter 是否已清掉（Duplicate package name 会让整组符号被丢弃）？"
+              grep -i 'oaf\|appfilter' ./.config || echo "（.config 中无任何 oaf / appfilter 相关行）"
+              exit 1
+            fi
+          done
+
+          echo "luci-app-bandix-plus（含 bandix-plus 后端）/ OpenAppFilter 三件套已就位且已被 .config 选中"
 
       # 防回归：与上面 netwiz 校验同源。两个自用插件都必须确认「包已就位 且
       # .config 已选中」，缺任一都会变成「编译全绿、固件里却少了自用插件」
