@@ -1,4 +1,138 @@
 # 更新日志
+## [2026-10-19] 新增：Podman 容器网络开箱可用（netavark nftables 驱动 + dnsmasq 避让 53）
+
+### 现象
+
+自用固件里 podman 与 luci-app-podman 都在，界面能打开、镜像能拉，但创建容器第一步即失败：
+
+```
+Error: netavark: iptables: No such file or directory (os error 2)
+```
+
+### 根因
+
+netavark 的默认防火墙驱动是 **iptables**，它会直接 exec `/usr/sbin/iptables` 写 NAT 规则。
+本固件走 fw4（纯 nftables），镜像里既没有 `iptables` 也没有 `iptables-nft` 二进制
+（`Config/GENERAL.txt` 只选 `kmod-nft-*`），于是第一条规则就 `ENOENT`。不是 podman /
+veth / bridge 的问题，是防火墙后端选错了。
+
+紧跟其后的第二个坑（同一批上报见 openwrt/packages#25730）：aardvark-dns 要 bind
+`10.88.0.1:53`（podman 默认网络网关），而 dnsmasq 监听所有已配置地址的 53 端口：
+
+```
+aardvark-dns failed to start: failed to bind udp listener on 10.88.0.1:53
+: IO error: Address in use (os error 98)
+```
+
+### 修复
+
+新增 `Scripts/podman/98-podman-network`，由 `Scripts/Handles.sh` 在 `WRT_CONFIG` 含
+`NETMONITOR` 时注入到 `files/etc/uci-defaults/`，设备**首次开机自动**完成三件事：
+
+1. 写 `/etc/containers/containers.conf.d/50-netavark-nftables.conf`，把驱动切成 netavark
+   原生的 `nftables`（内部调 `nft -j`，fw4 依赖的 nftables-json 已具备）。规则落在独立的
+   `inet netavark` 表，与 `inet fw4` 互不干扰；用 `conf.d` 片段而非直接改
+   `containers.conf`，包升级不会覆盖。
+2. `uci add_list dhcp.@dnsmasq[0].notinterface='podman0'`，让 dnsmasq 让出 10.88.0.1:53
+   （podman0 此刻尚不存在，dnsmasq 对不存在的接口名直接忽略，安全）。
+3. 仅当 `net.ipv4.ip_forward` 确为 0 时才补一条持久化 sysctl，不改动既有转发策略。
+
+未采用「装 `iptables-nft` 兼容层」方案：那需要额外 `kmod-nft-compat`，且 iptables 与 fw4
+各写一套 nft 表，多一层兼容壳；既然自编固件，直接用 netavark 原生 nftables 驱动更干净。
+
+`WRT-CORE.yml` 的自用校验步骤同步加了硬断言：`files/etc/uci-defaults/98-podman-network`
+缺失或不可执行即 `exit 1`，避免「编译全绿、设备上跑不起来」这类最难查的失败。
+
+### 验证
+
+```sh
+podman run --log-level=debug --rm docker.io/library/busybox date 2>&1 | grep -i firewall
+# 期望：[INFO netavark::firewall] Using nftables firewall driver
+nft list table inet netavark     # 规则表已生成
+podman run --rm -it docker.io/library/busybox ping -c1 223.5.5.5   # 容器出网
+```
+
+> 注意：LAN 内访问 `-p` 发布端口正常；从 WAN 访问需另在 fw4 放行（DNAT 后首包为 NEW，
+> 默认被 forward 链丢弃）。
+
+## [2026-10-19] 新增：H5000M 机型专属插件层（Bandix Plus / OpenAppFilter）
+
+### 背景
+
+两者原先写在 `Config/MT5700.txt`（MT 方案共用层），会让 AP3000M / X86 的 MT5700 变体
+以及 NetWiz-MT5700 一并继承 —— H5000M 专属插件被塞进其它机型。现在抽成
+`Config/H5000M-EXTRA.txt`，由 `WRT-CORE.yml` 在 `WRT_CONFIG` 以 `H5000M` 开头时追加；
+`Scripts/Packages.sh` 的取包逻辑同样按前缀加条件，非 H5000M 构建不再克隆这些仓库。
+
+### 改动
+
+- **Bandix Plus**（`bandix-plus` + `luci-app-bandix-plus` + 中文包）：多网口流量监控，
+  后端是上游预编译 musl 二进制，BPF 采集。前端仓库根目录与包目录同名，`UPDATE_PACKAGE`
+  的 pkg/name/all 三种模式都会互相覆盖，故手工提取。
+- **OpenAppFilter**（`kmod-oaf` + `appfilter` + `luci-app-oaf` + 中文包）：家长控制 /
+  应用过滤三件套。关键坑：feeds 里已有旧版 `net/open-app-filter`，同名包会让 OpenWrt 报
+  Duplicate package name，并在 `make defconfig` 阶段把整组符号连依赖一起丢弃（表现为
+  「构建全绿、固件里既没界面也没 oafd」），因此 `INSTALL_OPENAPPFILTER` 先清 feed 源目录
+  与 install 生成的悬空链接，再平铺上游三个一级包目录。
+- 两处都补了 CI 硬断言：包目录存在 + `.config` 符号已选中，缺失即红。
+
+## [2026-10-19] 移除：luci-app-taygedo（塔吉多每日签到）
+
+### 背景
+
+自用配置不再内置 `luci-app-taygedo`：
+
+- 本身不使用；
+- 其 `taygedo-rs` 常驻监听 `0.0.0.0:8787`，与 `luci-app-bandix-plus` 的默认 API 端口
+  冲突，会让 bandix-plus 开机 bind 失败并进入 procd crash loop（LuCI 显示
+  "bandix-plus is not running"）。
+
+### 改动
+
+`Config/H5000M-WIFI-YES-NETMONITOR.txt` 的包与注释、`Scripts/Packages-NetMonitor.sh`
+的导入段（约 130 行，含版本对齐自检）、`WRT-CORE.yml` 的导入 / 校验步骤、
+`H5000M-NETMONITOR-AUTO.yml` 的命名与注释、README 的变体表与插件矩阵。
+
+## [2026-10-18] 修复：全局 RUSTFLAGS 污染 feeds rust/host，导致带 podman 的构建失败
+
+### 现象
+
+真编译 `run 39123972766` 在第 24 步「编译固件」失败，栈顶是：
+
+```
+make[2]: *** [package/Makefile:186: package/feeds/packages/rust/host/compile] Error 1
+error: linking with `rust-lld` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lgcc_s
+          rust-lld: error: unable to find library -lutil / -lrt / -lpthread / -lm / -ldl / -lc
+error: could not compile `generic-array` (build script) due to 1 previous error
+```
+
+### 根因
+
+`Scripts/Packages.sh` 的 `SETUP_RUST_FOR_MT5700` 把
+
+```
+RUSTFLAGS=-C link-self-contained=yes -C linker=rust-lld
+```
+
+写进了 `GITHUB_ENV`，于是整个「编译固件」步骤（以及其中的每个包）都继承它。
+此前配置里唯一的 Rust 消费者是 `luci-app-mt5700`（包内 `src/Makefile` 直接调宿主
+cargo），所以从未暴露；这次加入 podman 后，`netavark` / `aardvark-dns` 触发了
+feeds 的 `rust/host` 构建 —— 宿主 target（`x86_64-unknown-linux-gnu`）用 rust-lld
+做链接器、又要求 self-contained，自然找不到宿主的 glibc/gcc_s，直接失败。
+
+与 podman 自身无关：失败发生在 18 分钟时的 `rust/host`，不是 `podman` / `netavark`。
+
+### 修复
+
+- `Scripts/Packages.sh`：不再向 `GITHUB_ENV` 写 `RUSTFLAGS`，改为在克隆后把 env
+  前缀直接注入 `luci-app-mt5700/src/Makefile` 的 cargo 命令行：
+  `RUSTFLAGS="-C link-self-contained=yes -C linker=rust-lld" cargo build ...`。
+  作用域精确到这一次调用，feeds 的 `rust/host` 不再受影响；注入后用 grep 自检，
+  失败即 `exit 1`（避免「静默没注入 → 交叉编译失败」）。
+- 未采用 `src/rust/.cargo/config.toml` 方案：`luci.mk` 的 `Build/Prepare` 是
+  `$(CP) ./src/*`，glob 不匹配隐藏目录，`.cargo` 不会被拷进 `PKG_BUILD_DIR`。
+
 ## [2026-10-07] 暂时禁用 MT5700M 变体编译：模组方案不稳定，暂停全部 MT5700M 入口
 
 ### 背景
