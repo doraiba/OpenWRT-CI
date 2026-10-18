@@ -358,21 +358,23 @@ jobs:
           fi
           echo "luci.mk 就位：$LUCI_MK"
 
-      # H5000M 自用变体专属：拉取 luci-app-netmonitor（网络监控）与
-      # luci-app-taygedo（塔吉多签到）源码放进 package/。
-      # 条件为 contains NETMONITOR，H5000M / AP3000M / X86 及各自
+      # H5000M 自用变体专属：拉取 luci-app-netmonitor（网络监控）源码放进
+      # package/。条件为 contains NETMONITOR，H5000M / AP3000M / X86 及各自
       # FM350 / NetWiz 变体均不执行本步骤，既有构建路径零影响。
       #
       # 位置与上面的 fm350 / netwiz 步骤同理，必须在「生成配置并执行
       # defconfig」之前：make defconfig 只认 package/ 树里此刻已存在的
-      # Makefile，包未就位时 CONFIG_PACKAGE_luci-app-netmonitor=y /
-      # CONFIG_PACKAGE_luci-app-taygedo=y 是孤立符号，会被连依赖一起丢弃，
-      # 结果是「编译全绿、固件里没有这两个插件」。
+      # Makefile，包未就位时 CONFIG_PACKAGE_luci-app-netmonitor=y 是孤立符号，
+      # 会被连依赖一起丢弃，结果是「编译全绿、固件里没有该插件」。
       #
       # luci-app-netmonitor 的 Makefile include feeds/luci/luci.mk（走 LuCI
-      # feed 编译框架），故还必须晚于「更新 feeds 软件源」步骤；luci-app-taygedo
-      # 走标准 package.mk，无此要求。当前位置已满足两者。
-      - name: 导入 luci-app-netmonitor / luci-app-taygedo（H5000M 自用变体）
+      # feed 编译框架），故还必须晚于「更新 feeds 软件源」步骤；当前位置已满足。
+      #
+      # 历史：本步骤原先还导入 luci-app-taygedo（塔吉多签到），已移除——不使用，
+      # 且其 taygedo-rs 常驻监听 0.0.0.0:8787，与 luci-app-bandix-plus 默认 API
+      # 端口冲突（后者开机 bind 失败 → procd crash loop → LuCI 显示
+      # "bandix-plus is not running"）。
+      - name: 导入 luci-app-netmonitor（H5000M 自用变体）
         if: contains(env.WRT_CONFIG, 'NETMONITOR')
         run: |
           cd ./wrt/package/
@@ -550,14 +552,14 @@ jobs:
 
           echo "luci-app-bandix-plus（含 bandix-plus 后端）/ OpenAppFilter 三件套已就位且已被 .config 选中"
 
-      # 防回归：与上面 netwiz 校验同源。两个自用插件都必须确认「包已就位 且
+      # 防回归：与上面 netwiz 校验同源。自用插件都必须确认「包已就位 且
       # .config 已选中」，缺任一都会变成「编译全绿、固件里却少了自用插件」
       # 这种最难查的失败；放在下载与编译之前，失配立刻红。
       # 另加 MT5700 一致性断言：自用配置固定使用 MT_MODE=MT5700 方案（MT 层
       # 由 ApplyMTMode 叠加，不内嵌在配置文件里）。若手动构建错配 MT Mode
       # （选了本配置却把 MT Mode 留空 / 选成 MT5700M），这里立即拦截，避免
       # 产出缺少 MT5700 模组功能的名不副实固件。
-      - name: 校验 luci-app-netmonitor / luci-app-podman / luci-app-taygedo 已选中
+      - name: 校验 luci-app-netmonitor / luci-app-podman 已选中
         if: contains(env.WRT_CONFIG, 'NETMONITOR')
         run: |
           cd ./wrt/
@@ -567,20 +569,9 @@ jobs:
             exit 1
           fi
 
-          if [ ! -d ./package/luci-app-taygedo ]; then
-            echo "::error::package/luci-app-taygedo 不存在：Packages-NetMonitor.sh 未执行或 clone 失败"
-            exit 1
-          fi
-
           if ! grep -qx 'CONFIG_PACKAGE_luci-app-netmonitor=y' ./.config; then
             echo "::error::.config 未选中 luci-app-netmonitor：包是否在 make defconfig 之前就位？"
             grep -i 'netmonitor' ./.config || echo "（.config 中无任何 netmonitor 相关行）"
-            exit 1
-          fi
-
-          if ! grep -qx 'CONFIG_PACKAGE_luci-app-taygedo=y' ./.config; then
-            echo "::error::.config 未选中 luci-app-taygedo：包是否在 make defconfig 之前就位？"
-            grep -i 'taygedo' ./.config || echo "（.config 中无任何 taygedo 相关行）"
             exit 1
           fi
 
@@ -620,7 +611,7 @@ jobs:
             exit 1
           fi
 
-          echo "luci-app-netmonitor / luci-app-podman（含后端与容器网络初始化）/ luci-app-taygedo 已就位且已被 .config 选中（MT5700 方案一致）"
+          echo "luci-app-netmonitor / luci-app-podman（含后端与容器网络初始化）已就位且已被 .config 选中（MT5700 方案一致）"
 
       - name: 预下载源码包
         if: env.WRT_TEST != 'true'
@@ -928,7 +919,7 @@ jobs:
           | `MT5700` | 普通 MT5700 模组方案（方案 B，单包内置 Rust 后端，仅非 NetWiz 产品） |
           | `MT5700M` | 普通 MT5700M 模组方案（方案 A，含短信与 AT 守护，仅非 NetWiz 产品） |
           | `FM350` | 普通 Fibocom FM350-GL 模组管理（RNDIS 数据通道，仅非 NetWiz 产品） |
-          | `自用` | 个人自用配置（H5000M + NetMonitor 网络监控 + Taygedo 签到，MT5700 方案，不进入公开 MT5700 分类） |
+          | `自用` | 个人自用配置（H5000M + NetMonitor 网络监控 + Podman 容器，MT5700 方案，不进入公开 MT5700 分类） |
           | `BASE` | 无变体基础构建（手动触发） |
 
           ## 文件名解读

@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026 VIKINGYFY
 
-# H5000M 自用（NetMonitor + Taygedo）专用编译入口：一份 workflow 只服务
+# H5000M 自用（NetMonitor + Podman）专用编译入口：一份 workflow 只服务
 # 作者自有的 H5000M 设备，产物在 Releases 中单独归组「自用」。
 #
 # 与 XXX-MT-AUTO 系列的关系：
 #   - 配置层用 Config/H5000M-WIFI-YES-NETMONITOR.txt（母配置板级定义 +
-#     luci-app-netmonitor + luci-app-taygedo 段）
+#     luci-app-netmonitor + luci-app-podman 段）
 #   - MT 层固定走 MT5700 方案：MT 选择必须走独立配置层（ApplyMTMode.sh
 #     在空模式时会显式禁用全部 MT 包，Packages.sh 的 MT5700 克隆也由
 #     MT_MODE=MT5700 驱动），不能内嵌进配置文件 —— 本工作流矩阵直接绑定
@@ -18,7 +18,7 @@
 #
 # Auto-Clean 兼容：keep_latest_per_device 的归组键解析为通用逻辑（按 Tag
 # 剥日期段取组名），「自用」组自动按最新一个 Release 保留，无需改 Auto-Clean。
-name: H5000M 自用定时编译（NetMonitor + Taygedo）
+name: H5000M 自用定时编译（NetMonitor + Podman）
 
 on:
   # Auto-Clean 完成后自动触发

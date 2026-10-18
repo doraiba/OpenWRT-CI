@@ -31,7 +31,7 @@ on:
           - H5000M-WIFI-YES-NETWIZ-FM350
           - AP3000M-NETWIZ-FM350
           - X86-NETWIZ-FM350
-          # H5000M 自用：母配置 + luci-app-netmonitor + luci-app-taygedo
+          # H5000M 自用：母配置 + luci-app-netmonitor + luci-app-podman
           # 注意：选此项时，下方 MT Mode 必须同步选为 MT5700（本配置固定
           # MT5700 方案，MT 层由 ApplyMTMode 叠加），否则校验步骤会拦截
           - H5000M-WIFI-YES-NETMONITOR

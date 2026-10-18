@@ -35,7 +35,7 @@
 | `*-NETWIZ-MT5700M` | H5000M / AP3000M / X86 | 母配置 **+ `luci-app-netwiz`** + MT5700M 方案 | `MT5700M` | 向导式配网 + 5G（方案 A） |
 | `*-NETWIZ-FM350` | H5000M / AP3000M / X86 | 母配置 **+ `luci-app-netwiz`** + FM350 | 无 | 向导式配网 + FM350 模组 |
 | **个人自用** |||||
-| `H5000M-WIFI-YES-NETMONITOR` | H5000M | 母配置 + 网络监控 `netmonitor` + 每日签到 `taygedo` | `MT5700`（固定） | 作者自用，不对外维护 |
+| `H5000M-WIFI-YES-NETMONITOR` | H5000M | 母配置 + 网络监控 `netmonitor` + 容器 `podman` | `MT5700`（固定） | 作者自用，不对外维护 |
 
 > *按需：母配置本身不含 5G 模组插件，编译时通过 **MT Mode** 下拉（`MT5700M` / `MT5700` / `NONE`）叠加，详见下文「模组方案」。
 
@@ -49,7 +49,9 @@
 | FM350 模组管理 `fm350` | — | ✅ | — | — | ✅ | — |
 | NetWiz 网络向导 `netwiz` | — | — | ✅ | ✅ | ✅ | — |
 | 网络监控 `netmonitor` | — | — | — | — | — | ✅ |
-| 每日签到 `taygedo` | — | — | — | — | — | ✅ |
+| Bandix 流量监控 `bandix-plus`〔H5000M 专属〕 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 应用过滤 `oaf`〔H5000M 专属〕 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Podman 容器 `podman` | — | — | — | — | — | ✅ |
 | 风扇温控 `h5000m/airpi-fancontrol` | H5000M / AP3000M | 同左 | 同左 | 同左 | 同左 | H5000M |
 
 > `✅` 内置　`🟡` 可选（由 MT Mode 决定）　`—` 不包含
@@ -124,7 +126,10 @@
 - 🚀 **硬件加解密加速**：内核级 `kmod-cryptodev` + `kmod-tls`，代理 / VPN 隧道跑在硬件加速通道
 - 💾 **轻量 NAS**：NVMe + BTRFS + Samba4，高速固态满速共享
 - 🌐 **零配置组网**：预置 Tailscale 与 EasyTier，无公网 IP 也能穿透组网
+- 👨‍👩‍👧 **家长控制**（H5000M）：`OpenAppFilter`（OAF）按应用 / MAC 过滤，含上网记录、白名单与实时连接视图
+- 📊 **多网口流量监控**（H5000M）：`Bandix Plus` 按接口 / 应用统计吞吐，BPF 内核采集，自带 Web 面板
 - 🐳 **Docker 支持**（X86）：`luci-app-dockerman` 容器管理
+- 📦 **Podman 容器**（H5000M 自用）：`luci-app-podman` + `podman` 5.2.2，容器 / 镜像 / 卷 / 网络 / Pod 全量管理；首次开机自动把 netavark 防火墙驱动切到 nftables（25.12 无 iptables 二进制）并与 dnsmasq 错开 `10.88.0.1:53`，开箱即可创建容器
 
 ---
 
@@ -216,6 +221,7 @@ OpenWRT-CI/
 │   ├── H5000M-WIFI-YES.txt / AP3000M.txt / X86.txt   # 机型板级定义
 │   ├── *-FM350.txt           # 各机型板级 + luci-app-fm350
 │   ├── *-NETWIZ-MT5700 / -MT5700M / -FM350.txt       # NetWiz 组合变体
+│   ├── H5000M-EXTRA.txt      # H5000M 专属插件层（Bandix Plus / OpenAppFilter）
 │   └── H5000M-WIFI-YES-NETMONITOR.txt  # 自用配置
 ├── AP3000M-EEPROM/           # AP3000M 射频恢复套件
 ├── Scripts/                  # 编译流水线钩子
@@ -224,6 +230,7 @@ OpenWRT-CI/
 │   ├── ApplyMTMode.sh        # MT 方案配置层组装与互斥注入
 │   ├── VerifyMTMode.sh       # 编译前 MT 驱动冲突语义校验
 │   ├── Handles.sh            # 静态资源预置与组件补丁
+│   ├── podman/98-podman-network  # Podman 容器网络首次开机初始化（自用）
 │   └── Settings.sh           # 默认 IP / Wi-Fi 参数编译期写入
 └── README.md
 ```

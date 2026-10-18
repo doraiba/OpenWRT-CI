@@ -9,7 +9,7 @@
 # 这里处理两个「开箱必踩」的问题（参考 openwrt/packages#25730）：
 #
 # 1) netavark 默认防火墙驱动是 iptables，它会直接 exec /usr/sbin/iptables 写 NAT
-#    规则。ImmortalWrt 25.12 走 fw4（纯 nftables），镜像里既没有 iptables 也没有
+#    规则。本固件走 fw4（纯 nftables），镜像里既没有 iptables 也没有
 #    iptables-nft 二进制（配置层只有 kmod-nft-*），于是第一条规则就失败：
 #      Error: netavark: iptables: No such file or directory (os error 2)
 #    这里强制改用 netavark 原生的 nftables 驱动（内部调 `nft -j`，fw4 依赖的

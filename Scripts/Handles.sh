@@ -337,7 +337,7 @@ esac
 # 其余机型与 FM350 / NetWiz 变体不执行本段，既有构建路径零影响。
 #
 # 解决的是「装上了但跑不起来」：netavark 默认防火墙驱动是 iptables，进程会直接
-# exec /usr/sbin/iptables 写 NAT 规则，而 ImmortalWrt 25.12 是纯 nftables（fw4），
+# exec /usr/sbin/iptables 写 NAT 规则，而本固件是纯 nftables（fw4），
 # 镜像里没有 iptables 二进制，于是 podman run 第一步就失败：
 #   Error: netavark: iptables: No such file or directory (os error 2)
 # 紧接着还有 aardvark-dns 要 bind 10.88.0.1:53、与 dnsmasq 抢端口的问题。
