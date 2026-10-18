@@ -41,12 +41,14 @@ on:
         required: true
         type: choice
         options:
-          - VIKINGYFY/immortalwrt
+          # VIKINGYFY/immortalwrt 保留为回滚 / 对照选项：改回它时 BRANCH 需填 owrt，
+          # 该仓库无 tag、无稳定分支，仅作临时回退用（见 CHANGELOG 2026-10-18）。
           - immortalwrt/immortalwrt
+          - VIKINGYFY/immortalwrt
           - LiBwrt/openwrt-6.x
       BRANCH:
-        description: '源码分支'
-        default: 'master'
+        description: '源码分支（正式版用 tag，如 v25.12.2；滚动快照用 master）'
+        default: 'v25.12.2'
         required: true
         type: string
       PACKAGE:

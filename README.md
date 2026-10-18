@@ -4,8 +4,7 @@
 
 **基于 ImmortalWrt 深度定制 · 专为 5G CPE、Wi-Fi 路由器与软路由打造**
 
-[![Source: VIKINGYFY](https://img.shields.io/badge/Source-VIKINGYFY%2Fimmortalwrt-blue?logo=openwrt&logoColor=white)](#)
-[![Source: Master](https://img.shields.io/badge/Source-immortalwrt%2Fmaster-brightgreen?logo=openwrt&logoColor=white)](#)
+[![Source: ImmortalWrt 25.12.2](https://img.shields.io/badge/Source-immortalwrt%2F25.12.2-blue?logo=openwrt&logoColor=white)](#)
 [![Platform: Filogic](https://img.shields.io/badge/Platform-MediaTek%20Filogic-orange)](#)
 [![Platform: x86_64](https://img.shields.io/badge/Platform-x86__64-informational)](#)
 [![Build: GitHub Actions](https://img.shields.io/badge/Build-GitHub%20Actions-success?logo=githubactions&logoColor=white)](#)
@@ -66,9 +65,13 @@
 
 | 目标配置 | 硬件平台 / SoC | 适配机型 | 源码 | Wi-Fi | 镜像格式 |
 | :--- | :--- | :--- | :--- | :---: | :--- |
-| `H5000M-WIFI-YES` | MediaTek Filogic (MT7986) | Hiveton H5000M 5G CPE | [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt) (`owrt`) | ✅ | Sysupgrade / Factory |
-| `AP3000M` | MediaTek Filogic (MT7981B) | AirPi AP3000M | [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt) (`owrt`) | ✅ | Sysupgrade / Factory |
-| `X86` | 标准 x86_64 处理器 | 通用 PC / 工控机 / 软路由 | [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) (`master`) | — | ISO / EFI / GRUB / VMDK |
+| `H5000M-WIFI-YES` | MediaTek Filogic (MT7986) | Hiveton H5000M 5G CPE | [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) (`v25.12.2`) | ✅ | Sysupgrade / Factory |
+| `AP3000M` | MediaTek Filogic (MT7981B) | AirPi AP3000M | [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) (`v25.12.2`) | ✅ | Sysupgrade / Factory |
+| `X86` | 标准 x86_64 处理器 | 通用 PC / 工控机 / 软路由 | [immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt) (`v25.12.2`) | — | ISO / EFI / GRUB / VMDK |
+
+> [!NOTE]
+> **源码基线**：三机型统一取 ImmortalWrt **25.12 正式版**（tag `v25.12.2`，内核 6.12），不再跟随滚动快照。
+> H5000M / AP3000M 的板级适配已并入官方主线，DTS 与设备定义和早前使用的个人 fork 逐字节一致。
 
 > [!IMPORTANT]
 > **AP3000M Wi-Fi 校准**：设备 eMMC 出厂时 factory 分区为空，Wi-Fi 驱动无法加载校准参数。本固件内置校准版 EEPROM（发射功率 28~29 dBm），**首次启动自动**写入真实 MAC 并修正 5GHz 频段，全程无需手动干预。
@@ -232,6 +235,7 @@ OpenWRT-CI/
 
 ## 💖 致敬与鸣谢
 
-* 🐧 **底包源码**：[immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt)（X86 主线）· [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt)（H5000M / AP3000M 板级适配）
+* 🐧 **底包源码**：[immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt)（三机型统一，`v25.12.2` 正式版）
+* 👤 **板级适配**：[VIKINGYFY](https://github.com/VIKINGYFY)（Hiveton H5000M / AirPi AP3000M 的 DTS 与设备定义由其提交并已并入 ImmortalWrt 主线）
 * 👤 **编译框架**：[VIKINGYFY/OpenWRT-CI](https://github.com/VIKINGYFY/OpenWRT-CI)（云编译框架与插件优化）
 * 👤 **模组与插件**：[FAN789](https://github.com/FAN789) · [luci-app-mt5700m](https://github.com/LianXia233/luci-app-mt5700m) · [luci-app-fm350](https://github.com/LianXia233/luci-app-fm350) · [luci-app-netwiz](https://github.com/huchd0/luci-app-netwiz) · [luci-app-h5000m-fancontrol](https://github.com/FAN789/luci-app-h5000m-fancontrol) · [luci-app-h5000m-netmode](https://github.com/LianXia233/luci-app-h5000m-netmode)

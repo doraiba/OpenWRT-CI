@@ -32,9 +32,12 @@ jobs:
       fail-fast: false
       matrix:
         CONFIG: [H5000M-WIFI-YES]
-        # 本机型源码取自 VIKINGYFY/immortalwrt 的 owrt 分支（该仓库无 master 分支）
-        SOURCE: [VIKINGYFY/immortalwrt]
-        BRANCH: [owrt]
+        # 本机型源码取自 ImmortalWrt 官方 25.12 正式版（tag v25.12.2）。
+        # 2026-10-18 起由 VIKINGYFY/immortalwrt 的 owrt 快照分支切回官方稳定版：
+        # 该机型的 DTS 与 filogic.mk 设备定义在官方 v25.12.2 中与 fork 逐字节一致，
+        # 已无跟随个人 fork 的必要（详见 CHANGELOG 2026-10-18）。
+        SOURCE: [immortalwrt/immortalwrt]
+        BRANCH: [v25.12.2]
         # 同时编译两种 MT 配置（严格互斥，由 Apply/VerifyMTMode 保证）
         # MT5700M 变体不稳定，自 2026-10-07 起暂时禁用，当前仅编译 MT5700
         MT_MODE: [MT5700]

@@ -814,6 +814,19 @@ jobs:
             make clean -j$(nproc)
           fi
 
+      # TEST 模式（仅生成配置、不编译）下「发布固件到 Release」被跳过，
+      # 导出的 .config 只能留在 runner 内、跑完即失。单独上传为 artifact，
+      # 便于切换源码基线后下载比对：确认 Config/*.txt 里的关键符号未被
+      # make defconfig 静默丢弃（内核 6.18 → 6.12 尤其需要这一步）。
+      - name: 上传配置产物（TEST 模式）
+        if: env.WRT_TEST == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Config-${{ env.WRT_CONFIG }}-${{ env.WRT_MT }}
+          path: ./wrt/upload/Config-*.txt
+          if-no-files-found: error
+          retention-days: 7
+
       # 发布固件到 Release。
       #   softprops/action-gh-release 在并发上传多文件时偶发 GitHub 服务端
       #   断连（`other side closed`），导致「编译成功但发布标红」的假失败。

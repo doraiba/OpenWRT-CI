@@ -1,4 +1,65 @@
 # 更新日志
+## [2026-10-18] 源码基线切至 ImmortalWrt 25.12 正式版（`v25.12.2`），移除对个人 fork 的依赖
+
+### 背景
+
+此前 H5000M / AP3000M 取 `VIKINGYFY/immortalwrt` 的 `owrt` 分支、X86 取官方
+`master`，三机型实际都跑在**滚动快照**上：`owrt` 无 tag、无稳定分支，官方
+`master` 每日滚动，因此固件无法固定到任何一个正式版。本仓库 2026-09-18 切换
+时做的兼容性核对已记录结论——「本次切换当下不引入内核或无线驱动层面的差异」，
+即跟随该 fork 从未带来功能收益。
+
+### 依据（实测核对）
+
+- `mt7987a-hiveton-h5000m.dts`、`mt7981b-airpi-ap3000m.dts`：fork `owrt` 与官方
+  `v25.12.2` **逐字节一致**。
+- `filogic.mk` 设备定义：H5000M 一致；AP3000M 官方更完整（多
+  `KERNEL := kernel-bin | lzma | fit lzma`）。
+- 文件树对比（fork@owrt vs 官方 master，fork 多出约 700 个文件）：增量集中在
+  `qualcommax` / `qualcommbe` / `airoha` / `rtl837x` / `ipq-wifi` / `ath11k` /
+  `ath12k` 与 `package/emortal/*`，**与本项目三机型无关**。
+- 切到官方后唯一不再包含的 fork 私有内容，是 filogic 全局的 3 个体验类文件
+  （`992_set-ppe-load.sh` 改 LuCI 状态页取 `/sbin/cpuusage`、
+  `993_set-packet-steering.sh`、`sbin/cpuusage`）与 1 个仅 6.18 使用的
+  `197-arm64-dts-mediatek-fill-cacheinfo.patch`，均不影响编译与刷机。
+
+### 变更
+
+- 三机型源码统一为 `immortalwrt/immortalwrt` + `v25.12.2`：
+  - `H5000M-MT-AUTO` / `AP3000M-MT-AUTO` / `X86-MT-AUTO` / `H5000M-NETMONITOR-AUTO`：矩阵 `SOURCE` / `BRANCH`；
+  - `FM350-AUTO`：矩阵 3 条；`NetWiz-AUTO`：矩阵 6 条；
+  - `WRT-BUILD`：手动入口 `BRANCH` 默认值 `master` → `v25.12.2`，描述补充「正式版用 tag，快照用 master」。
+- `README.md`：徽章、机型源码表、鸣谢段落按新基线改写，并新增「源码基线」说明块。
+
+### 副作用
+
+- **内核 6.18 → 6.12**：25.12 系列基线为 6.12（fork 的 `owrt` 为 6.18）。kmod
+  相关符号以实际 `make defconfig` 结果为准，`Config/*.txt` 中失效符号会被静默丢弃。
+- **命名与缓存**：`WRT_INFO` 由 `VIKINGYFY` 变为 `immortalwrt`，Release Tag、
+  固件文件名、导出配置名中的源码段随之变化；`Auto-Clean` 的机型键按日期后缀定位，
+  不依赖该段，无需改动。缓存键含分支名，`v25.12.2` 与既有 `master` / `owrt`
+  不共享，**首次构建为冷启动**。
+
+### 验证建议
+
+1. 先以 `TEST=true` 手动触发各入口，比对 `upload/Config-*.txt` 与原
+   `Config/*.txt` 的关键包是否仍在（`WRT-CORE` 内已有 fm350 / netwiz /
+   netmonitor / mt5700 的选中断言）。
+2. 再对单一机型做首次真编译，确认 LuCI 与 `LianXia233/*` 系列插件在 25.12 的
+   feeds 下编译通过，然后放开定时任务。
+
+### 回滚方式
+
+把各 workflow 的 `SOURCE` / `BRANCH` 改回 `VIKINGYFY/immortalwrt` + `owrt` 即可，
+`Config/` 与 `Scripts/` 无需任何改动。
+
+### 变更文件
+
+- `.github/workflows/`：`H5000M-MT-AUTO.yml`、`AP3000M-MT-AUTO.yml`、
+  `X86-MT-AUTO.yml`、`H5000M-NETMONITOR-AUTO.yml`、`FM350-AUTO.yml`、
+  `NetWiz-AUTO.yml`、`WRT-BUILD.yml`
+- `README.md`、`CHANGELOG.md`
+
 ## [2026-10-17] MT5700 相关配置补齐 Docker：H5000M / AP3000M 也内置 luci-app-dockerman
 
 ### 背景
@@ -27,6 +88,7 @@ Docker 此前只写在 X86 系列配置（`X86*.txt`）中，H5000M / AP3000M �
 NAND 机型，若打包阶段报镜像超限，应把 Docker 数据目录（`/opt/docker` 或
 `/var/lib/docker`）指向外挂存储，而不是砍掉引擎；首次正式编译建议先以
 `TEST=true` / 小规模验证镜像体积。
+
 
 ## [2026-10-07] 暂时禁用 MT5700M 变体编译：模组方案不稳定，暂停全部 MT5700M 入口
 

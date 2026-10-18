@@ -8,9 +8,10 @@
 #   - MT_MODE 留空：FM350 走 RNDIS 数据通道，不装 MT5700 / MT5700M 插件
 #   - 传 WRT_VARIANT=FM350，产物文件名末尾追加 "-FM350" 以便与母配置区分
 #
-# 矩阵用 include 而非笛卡尔积：三个机型的 FM350 配置虽同名后缀，但源码上游不同
-# （H5000M / AP3000M 取 VIKINGYFY/immortalwrt 的 owrt 分支，X86 取
-# immortalwrt/immortalwrt 的 master 分支），必须逐项绑定，不能交叉组合。
+# 矩阵用 include 而非笛卡尔积：三个机型的配置虽同名后缀，但源码绑定必须逐项书写，
+# 便于后续按机型单独调整。当前三机型统一取 ImmortalWrt 官方 25.12 正式版
+# （tag v25.12.2）；2026-10-18 前 H5000M / AP3000M 取 VIKINGYFY/immortalwrt 的
+# owrt 快照分支，切换原因见 CHANGELOG 2026-10-18。
 #
 # 配置名保留机型前缀：WRT-CORE.yml 的 AP3000M 专属步骤（EEPROM 注入、
 # AirPi Rust 后端预编译）靠 contains 子串匹配，改名会让它们静默失配。
@@ -45,14 +46,14 @@ jobs:
       matrix:
         include:
           - CONFIG: H5000M-WIFI-YES-FM350
-            SOURCE: VIKINGYFY/immortalwrt
-            BRANCH: owrt
+            SOURCE: immortalwrt/immortalwrt
+            BRANCH: v25.12.2
           - CONFIG: AP3000M-FM350
-            SOURCE: VIKINGYFY/immortalwrt
-            BRANCH: owrt
+            SOURCE: immortalwrt/immortalwrt
+            BRANCH: v25.12.2
           - CONFIG: X86-FM350
             SOURCE: immortalwrt/immortalwrt
-            BRANCH: master
+            BRANCH: v25.12.2
 
     uses: ./.github/workflows/WRT-CORE.yml
     with:
