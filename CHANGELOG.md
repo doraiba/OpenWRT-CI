@@ -1,4 +1,33 @@
 # 更新日志
+## [2026-10-17] MT5700 相关配置补齐 Docker：H5000M / AP3000M 也内置 luci-app-dockerman
+
+### 背景
+
+Docker 此前只写在 X86 系列配置（`X86*.txt`）中，H5000M / AP3000M 全系
+（母配置、MT5700 / MT5700M 变体、自用配置）均无容器能力 —— 同为 MT5700
+方案的三机型出现能力不一致：X86 的 MT5700 变体带 Dockerman，另外两型不带。
+
+### 改动
+
+- `Config/H5000M-WIFI-YES.txt` / `Config/AP3000M.txt`：母配置补
+  `CONFIG_PACKAGE_luci-app-dockerman=y`（`H5000M-MT-AUTO` / `AP3000M-MT-AUTO`
+  与手动 `WRT-BUILD` 走 MT5700 时即带容器）；
+- `Config/H5000M-WIFI-YES-NETWIZ-MT5700.txt` / `-MT5700M.txt`、
+  `Config/AP3000M-NETWIZ-MT5700.txt` / `-MT5700M.txt`：NetWiz + MT 组合补同一行
+  （`X86-NETWIZ-MT5700(.M)` 原本已带，无需改动）；
+- `Config/H5000M-WIFI-YES-NETMONITOR.txt`（自用 · 固定 MT5700）：同上。
+- 写法与 X86 保持一致：只显式选中 LuCI 前端包，`dockerd` / `containerd` /
+  `docker-compose` / `luci-lib-docker` / `ttyd` 由 `luci-app-dockerman` 的
+  `LUCI_DEPENDS` 自动拉入，不额外堆内核模块（`kmod-veth` / `kmod-dummy` /
+  `kmod-nft-bridge` 已由 `Config/GENERAL.txt` 提供）。
+
+### 注意
+
+`dockerd + containerd` 会让 rootfs 增加百 MB 量级。H5000M / AP3000M 属 eMMC /
+NAND 机型，若打包阶段报镜像超限，应把 Docker 数据目录（`/opt/docker` 或
+`/var/lib/docker`）指向外挂存储，而不是砍掉引擎；首次正式编译建议先以
+`TEST=true` / 小规模验证镜像体积。
+
 ## [2026-10-07] 暂时禁用 MT5700M 变体编译：模组方案不稳定，暂停全部 MT5700M 入口
 
 ### 背景

@@ -124,7 +124,7 @@
 - 🚀 **硬件加解密加速**：内核级 `kmod-cryptodev` + `kmod-tls`，代理 / VPN 隧道跑在硬件加速通道
 - 💾 **轻量 NAS**：NVMe + BTRFS + Samba4，高速固态满速共享
 - 🌐 **零配置组网**：预置 Tailscale 与 EasyTier，无公网 IP 也能穿透组网
-- 🐳 **Docker 支持**（X86）：`luci-app-dockerman` 容器管理
+- 🐳 **Docker 支持**（X86 全系 / H5000M · AP3000M 的 MT5700 系列）：`luci-app-dockerman` 容器管理
 
 ---
 

@@ -71,5 +71,22 @@ CONFIG_PACKAGE_jsonfilter=y
 # [ -f /etc/init.d/xxx ] 或 [ -x /etc/init.d/xxx ] 存在性守卫，属软依赖，
 # 未安装时静默跳过，因此本文件不声明这些包。
 #
+# ===== Docker 容器支持：luci-app-dockerman =====
+#
+# 写法与 X86 系列配置保持一致：只显式选中 LuCI 前端包，引擎侧全部交给依赖链
+# （luci-app-dockerman 的 LUCI_DEPENDS 已含 dockerd / containerd / docker-compose /
+#  luci-lib-docker / ttyd），此处不重复声明，避免与上游依赖表漂移后互相打架。
+#
+# 内核侧现状（本文件刻意不声明，原因如下）：
+#   kmod-veth / kmod-dummy / kmod-nft-bridge 已在 Config/GENERAL.txt 中选中，
+#   veth 配对与容器网桥可用。若后续出现容器内不通外网 / NAT 失效，需另行打开
+#   kmod-br-netfilter / kmod-nf-ipvs / kmod-macvlan / kmod-ipvlan —— 当前保持
+#   与 X86 一致的「最小声明」策略，不预先堆模块。
+#
+# 容量提示：dockerd + containerd 及其运行时依赖会让 rootfs 增加百 MB 量级。
+# 若打包阶段报镜像超限（Image too big / 分区不足），优先把 Docker 数据目录
+# （/opt/docker 或 /var/lib/docker）指到外挂存储，而不是砍掉引擎本身。
+CONFIG_PACKAGE_luci-app-dockerman=y
+
 # MT 相关包一律交给 MT_MODE 决定：Scripts/ApplyMTMode.sh 在本层之后执行，
 # 会用 =n 覆盖本文件可能写入的任何 MT 包，故本文件不声明任何 MT 包。
