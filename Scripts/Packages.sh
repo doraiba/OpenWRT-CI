@@ -73,6 +73,34 @@ UPDATE_PACKAGE "passwall2" "Openwrt-Passwall/openwrt-passwall2" "main" "pkg"
 UPDATE_PACKAGE "luci-app-tailscale" "asvow/luci-app-tailscale" "main"
 
 #UPDATE_PACKAGE "athena-led" "unraveloop/JDC-AX6600-Athena-LED-Controller" "main"
+
+# ===== Bandix Plus 多网口流量监控（仅 H5000M 机型）=====
+#
+# 符号写在 Config/H5000M-EXTRA.txt（WRT-CORE 对 WRT_CONFIG 以 H5000M 开头的构建
+# 才追加），所以这里也只在 H5000M 下取包：AP3000M / X86 / NetWiz 变体不需要它，
+# 少克隆一个仓库，package/ 树里也不会多出用不上的包。
+#
+# 后端 bandix-plus 来自 timsaya/openwrt-bandix-plus，包体是**预编译二进制**：按
+# RUSTC_TARGET_ARCH（aarch64 → aarch64-unknown-linux-musl）从 GitHub Releases 下载，
+# hash 按 ARCH 分支写在 Makefile 里；运行期依赖内核 BPF（generic 内核已开
+# CONFIG_BPF_SYSCALL / BPF_JIT）。仓库根目录是 openwrt-bandix-plus/，故用 name
+# 模式重命名后提取。
+#
+# 前端仓库根目录与包目录同名（luci-app-bandix-plus/luci-app-bandix-plus），
+# UPDATE_PACKAGE 的 pkg/name/all 三种模式都会因同名目录互相覆盖（复制进自身后
+# 再被整体删除），因此手工提取；目录名必须保持 luci-app-bandix-plus，luci.mk
+# 以目录名作为包名。
+case "${WRT_CONFIG:-}" in
+H5000M*)
+	UPDATE_PACKAGE "bandix-plus" "timsaya/openwrt-bandix-plus" "main" "name"
+
+	rm -rf ./luci-app-bandix-plus ./bandix-plus-luci
+	git clone --depth=1 --single-branch --branch main https://github.com/timsaya/luci-app-bandix-plus.git ./bandix-plus-luci
+	cp -rf ./bandix-plus-luci/luci-app-bandix-plus ./luci-app-bandix-plus
+	rm -rf ./bandix-plus-luci
+	;;
+esac
+
 UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
 UPDATE_PACKAGE "diskman" "sbwml/luci-app-diskman" "main"
 UPDATE_PACKAGE "diskmanager" "4IceG/luci-app-mini-diskmanager" "main"

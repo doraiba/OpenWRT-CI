@@ -1,0 +1,24 @@
+# H5000M 机型专属插件层（Bandix Plus / OpenAppFilter）
+#
+# 为什么单独成层，而不是写进 Config/MT5700.txt 或各机型配置里：
+#   - Config/MT5700.txt 是 MT 方案共用层，H5000M / AP3000M / X86 的 MT5700 变体
+#     以及 NetWiz-MT5700 都会叠加它，写在那里等于把 H5000M 专属插件塞进其它机型；
+#   - 逐份复制到 H5000M-WIFI-YES / -FM350 / -NETWIZ-* / -NETMONITOR 六个文件里，
+#     改一处要同步六处，迟早漏。
+# 因此由 WRT-CORE.yml 在 WRT_CONFIG 以 H5000M 开头时追加本文件（叠加在
+# Config/<WRT_CONFIG>.txt + Config/GENERAL.txt 之后、Settings.sh / ApplyMTMode.sh
+# 之前），非 H5000M 构建完全不加载。
+#
+# 本层只放「纯增量」的 =y 符号；不要在这里禁用任何包——禁用项应写进对应机型的
+# 配置层，否则会影响同机型的其它变体。
+
+# ===== Bandix Plus 多网口流量监控（timsaya/luci-app-bandix-plus）=====
+#
+# 后端 bandix-plus 是预编译二进制（aarch64-unknown-linux-musl，从上游 Release
+# 下载，hash 按 ARCH 分支写在 Makefile 里），运行期依赖内核 BPF；前端 LUCI_DEPENDS
+# 已含后端，这里显式选中后端便于在 menuconfig 里单独关闭。
+# 取包逻辑见 Scripts/Packages.sh 的 H5000M 分支（前端仓库根目录与包目录同名，
+# 不能走 UPDATE_PACKAGE 的 pkg/name/all 三种模式，需手工提取）。
+CONFIG_PACKAGE_bandix-plus=y
+CONFIG_PACKAGE_luci-app-bandix-plus=y
+CONFIG_PACKAGE_luci-i18n-bandix-plus-zh-cn=y

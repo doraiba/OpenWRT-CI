@@ -399,6 +399,14 @@ jobs:
             cat $GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt $GITHUB_WORKSPACE/Config/GENERAL.txt >> .config
           fi
 
+          # H5000M 机型专属插件层（Bandix Plus / OpenAppFilter）。
+          # 不写进 Config/MT5700.txt 的原因：那是 MT 方案共用层，AP3000M / X86 /
+          # NetWiz-MT5700 都会叠加，等于把 H5000M 专属插件塞进其它机型。
+          # 也不逐份复制到 H5000M 的六个配置里：改一处要同步六处，迟早漏。
+          if [[ "${WRT_CONFIG,,}" == h5000m* ]]; then
+            cat $GITHUB_WORKSPACE/Config/H5000M-EXTRA.txt >> .config
+          fi
+
           # 显式启用 ccache：缓存落到 ./.ccache，与上面缓存的 path 对应。
           # 重复编译、仅改配置或插件时可大幅缩短耗时。
           echo "CONFIG_CCACHE=y" >> .config
@@ -496,6 +504,33 @@ jobs:
           esac
 
           echo "luci-app-netwiz 及中文语言包已就位且已被 .config 选中"
+
+      # 防回归：H5000M 专属插件层（Config/H5000M-EXTRA.txt）。这一层靠 WRT_CONFIG
+      # 前缀条件追加，追加语句写错或文件缺行都不会报错，只会变成「编译全绿、固件里
+      # 没有界面」，因此在下载与编译之前硬断言。
+      - name: 校验 Bandix Plus 已选中（H5000M）
+        if: startsWith(env.WRT_CONFIG, 'H5000M')
+        run: |
+          cd ./wrt/
+
+          if [ ! -d ./package/luci-app-bandix-plus ]; then
+            echo "::error::package/luci-app-bandix-plus 不存在：Packages.sh 的 H5000M 分支未执行或 clone 失败"
+            exit 1
+          fi
+
+          if ! grep -qx 'CONFIG_PACKAGE_luci-app-bandix-plus=y' ./.config; then
+            echo "::error::.config 未选中 luci-app-bandix-plus：Config/H5000M-EXTRA.txt 是否被追加？"
+            grep -i 'bandix' ./.config || echo "（.config 中无任何 bandix 相关行）"
+            exit 1
+          fi
+
+          if ! grep -qx 'CONFIG_PACKAGE_bandix-plus=y' ./.config; then
+            echo "::error::.config 未选中 bandix-plus 后端：前端 LUCI_DEPENDS 未必能兜住后端，需显式选中"
+            grep -i 'bandix' ./.config || echo "（.config 中无任何 bandix 相关行）"
+            exit 1
+          fi
+
+          echo "luci-app-bandix-plus（含 bandix-plus 后端）已就位且已被 .config 选中"
 
       # 防回归：与上面 netwiz 校验同源。两个自用插件都必须确认「包已就位 且
       # .config 已选中」，缺任一都会变成「编译全绿、固件里却少了自用插件」
