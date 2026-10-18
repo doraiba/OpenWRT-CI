@@ -27,8 +27,8 @@ CONFIG_PACKAGE_luci-i18n-bandix-plus-zh-cn=y
 #
 # 三件套缺一不可：kmod-oaf 是 netfilter 模块（没有它 oafd 无法下发规则），
 # appfilter 是用户态守护进程 oafd + feature.bin 特征库，luci-app-oaf 是界面。
-# 前端为 Lua/CBI 实现，依赖 luci-compat + luci-lua-runtime（25.12 仍提供，
-# 位于 luci feed 的 modules/ 下）。
+# 前端为 Lua/CBI 实现，依赖 luci-compat + luci-lua-runtime（luci feed 的
+# modules/ 下仍提供）。
 #
 # ⚠️ 与 feed 的冲突：immortalwrt/packages 里已有 net/open-app-filter 旧快照，
 # 其单文件 Makefile 同样定义了 appfilter 与 kmod-oaf 两个包名。两套同名包共存
