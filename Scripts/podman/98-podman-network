@@ -6,7 +6,7 @@
 # 由 Scripts/Handles.sh 复制到 files/etc/uci-defaults/98-podman-network，
 # 首次开机执行一次，退出码为 0 时脚本自身被删除。
 #
-# 这里处理两个「开箱必踩」的问题（参考 openwrt/packages#25730）：
+# 这里处理三个「开箱必踩」的问题（参考 openwrt/packages#25730）：
 #
 # 1) netavark 默认防火墙驱动是 iptables，它会直接 exec /usr/sbin/iptables 写 NAT
 #    规则。本固件走 fw4（纯 nftables），镜像里既没有 iptables 也没有
@@ -24,6 +24,27 @@
 #      : IO error: Address in use (os error 98)
 #    把 podman0 加进 dnsmasq 的 notinterface 名单，让 dnsmasq 让出该地址。
 #    podman0 此刻通常还不存在，dnsmasq 对不存在的接口名直接忽略，无副作用。
+#
+# 3) `podman run -p 8080:80` 之后局域网访问 192.168.10.1:8080 不通。
+#    netavark 的 DNAT 生效后目的地址已变成 10.88.0.x，包走的是 FORWARD 而不是
+#    INPUT；podman0 不属于任何 zone 时，fw4 的 forward 链直接丢弃。
+#    这里给 podman0 建独立 zone，并补齐三条跨 zone 转发：
+#      lan    -> podman   局域网访问 -p 映射端口（DNAT 之后必须放行）
+#      podman -> wan      容器出网（出站同样要过 forward 链）
+#      podman -> lan      容器访问 NAS / 其他内网设备
+#    刻意不建 wan -> podman：容器端口不暴露到公网。
+#
+#    ⚠️ 只把 zone 的 forward 设成 ACCEPT 并不能替代上面三条：fw4 为每个 zone
+#    生成的 forward_<zone> 链尾部是 `jump <zone.forward>_to_<zone.name>`，
+#    只匹配本 zone 的出口设备，即只控制 zone 内部接口之间的转发；跨 zone 一律
+#    需要 config forwarding 段（见 firewall4/templates/ruleset.uc 的
+#    chain forward_<zone> 构造）。zone 的 input=ACCEPT 则单独负责
+#    「容器访问路由器自身服务」。
+#
+#    建 zone 时按 device 绑定、不建 OpenWrt 接口：避免 netifd 接管 podman0 桥
+#    （netifd 一旦管理该桥，reload 会把它拆掉重建，正在跑的容器断网）。
+#    已存在承载 podman0 的 zone（无论叫什么名字、手工建的也算）时不再改它的
+#    策略，只补缺的 forwarding，避免覆盖手工调过的防火墙。
 
 [ -x /usr/bin/podman ] || exit 0
 
@@ -51,6 +72,76 @@ if [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = "0" ]; then
 	echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-podman-forward.conf
 	sysctl -w net.ipv4.ip_forward=1 >/dev/null 2>&1
 	echo "podman: 已开启 ip_forward"
+fi
+
+FW_CHANGED=0
+
+# 列出现有 zone 段名（含匿名段，形如 @zone[0]）
+zones() {
+	uci -q show firewall 2>/dev/null | sed -n 's/^firewall\.\([^.=]*\)=zone$/\1/p'
+}
+
+# 是否已存在名为 $1 的 zone
+has_zone() {
+	for s in $(zones); do
+		[ "$(uci -q get firewall."$s".name)" = "$1" ] && return 0
+	done
+	return 1
+}
+
+# 找出承载 podman0 的既有 zone：认 name=podman，或 device/network 里出现
+# podman / podman0。手工建过 zone 就不重复建，避免同一设备被两个 zone 认领。
+PODMAN_ZONE=
+for s in $(zones); do
+	if [ "$(uci -q get firewall."$s".name)" = "podman" ] ||
+	   echo " $(uci -q get firewall."$s".device) $(uci -q get firewall."$s".network) " |
+	   grep -qE '[[:space:]](podman|podman0)[[:space:]]'; then
+		PODMAN_ZONE=$s
+		break
+	fi
+done
+
+if [ -z "$PODMAN_ZONE" ]; then
+	uci set firewall.podman=zone
+	uci set firewall.podman.name='podman'
+	uci set firewall.podman.input='ACCEPT'
+	uci set firewall.podman.output='ACCEPT'
+	uci set firewall.podman.forward='ACCEPT'
+	uci set firewall.podman.device='podman0'
+	FW_CHANGED=1
+	echo "podman: 已创建防火墙 zone podman（device podman0，宽松策略）"
+else
+	echo "podman: 已有 zone $(uci -q get firewall."$PODMAN_ZONE".name) 承载 podman0，保留其策略不改"
+fi
+
+# 补一条 src -> dest 转发；已存在则跳过（遍历 forwarding 段按 src/dest 配对）
+add_fwd() {
+	for s in $(uci -q show firewall 2>/dev/null | sed -n 's/^firewall\.\([^.=]*\)=forwarding$/\1/p'); do
+		if [ "$(uci -q get firewall."$s".src)" = "$1" ] &&
+		   [ "$(uci -q get firewall."$s".dest)" = "$2" ]; then
+			return 0
+		fi
+	done
+	uci set firewall."$3"=forwarding
+	uci set firewall."$3".src="$1"
+	uci set firewall."$3".dest="$2"
+	FW_CHANGED=1
+	echo "podman: 已放行 $1 -> $2 转发"
+}
+
+add_fwd lan podman lan_podman
+
+if has_zone wan; then
+	add_fwd podman wan podman_wan
+else
+	echo "podman: 未发现 wan zone，跳过 podman -> wan（本机可能用 mwan3 / 自定义命名）"
+fi
+
+add_fwd podman lan podman_lan
+
+if [ "$FW_CHANGED" = "1" ]; then
+	uci commit firewall
+	/etc/init.d/firewall reload >/dev/null 2>&1
 fi
 
 exit 0

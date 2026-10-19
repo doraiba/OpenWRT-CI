@@ -122,8 +122,11 @@
 
 ### 3. NetWiz 向导式网络管家 (`luci-app-netwiz`)
 
-- **一步一景向导**：提供图形化配置网络流程，降低家庭/企业初次入网难度；
-- **三层容灾自愈**：内置 `netwiz-monitor` 巡检、`netwiz-recovery` 自愈与 `netwiz-watchdog` 状态看门狗。
+### 4. 自用扩展插件（H5000M 专属层 `Config/H5000M-EXTRA.txt`）
+
+- 📊 **多网口流量监控 Bandix Plus**：按接口 / 应用统计吞吐，BPF 内核采集，自带 Web 面板与 TCX 限速；
+- 👨‍👩‍👧 **家长控制 OpenAppFilter（OAF）**：`kmod-oaf` + `appfilter` + `luci-app-oaf`，按应用 / MAC 过滤，含上网记录、白名单与实时连接视图（DPI 依赖 netfilter 钩子，与硬件加速互斥）；
+- 📦 **Podman 容器**（仅 `H5000M-WIFI-YES-NETMONITOR`）：`luci-app-podman` + `podman`，容器 / 镜像 / 卷 / 网络 / Pod 全量管理；首次开机自动把 netavark 防火墙驱动切到 nftables（本固件无 iptables 二进制）、与 dnsmasq 错开 `10.88.0.1:53`、给 `podman0` 建独立 fw4 zone 并放行 `lan ↔ podman` 与 `podman → wan`，开箱即可创建容器、容器能出网、局域网可直接访问 `-p` 映射端口。
 
 ---
 
