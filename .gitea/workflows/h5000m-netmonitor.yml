@@ -64,6 +64,10 @@ jobs:
     # 自建 runner 没有 GitHub 的 6 小时硬上限，这里放宽到 6 小时仅作兜底；
     # 有持久缓存后实际耗时约 3 小时（冷编译另计）。
     timeout-minutes: 360
+    # 这里的值必须是你 Gitea runner 上真实存在的标签名（不是镜像名）。
+    # 注册 runner 时用 --labels ubuntu-latest:docker://catthehacker/ubuntu:act-22.04，
+    # 冒号前的 ubuntu-latest 才是标签；若 runner 用的是别的名字（如 my-runner），
+    # 改这一行即可，不用动其他地方。标签不对会报「没有匹配 xx 标签的在线运行器」。
     runs-on: ubuntu-latest
     steps:
       # Gitea 的 workspace 由 runner 创建，但不自动检出，这里手动 clone，

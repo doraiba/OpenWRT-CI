@@ -38,23 +38,40 @@ act_runner 即可运行，不需要 GitHub 托管。
 ### 2. 注册 act_runner
 
 ```bash
-# Gitea 后台：站点管理 → Actions → Runners → 创建 Runner，得到 token
-docker run --rm -it \
-  -v /srv/act-runner:/data \
-  -v /srv/wrt-cache:/srv/wrt-cache \
-  -v /srv/wrt-build:/srv/wrt-build \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  gitea/act_runner:latest act_runner register \
+# 0. token 从「仓库设置 → Actions → Runner」或「站点管理 → Actions → Runners」创建
+docker run --rm \
+  -v /srv/act-runner:/data -w /data \
+  gitea/act_runner:latest register \
     --no-interactive \
     --instance https://git.example.com \
     --token <RUNNER_TOKEN> \
+    --name wrt-builder \
     --labels ubuntu-latest:docker://catthehacker/ubuntu:act-22.04
 ```
+
+两个容易漏的地方：
+
+- **`-w /data` 不能省**。`register` 会把凭证写到当前工作目录的 `.runner` 文件，
+  不指定 `-w /data` 就会写进容器临时目录，容器一退就没了，于是下次启动显示「未注册」。
+- **`--labels` 里的 `ubuntu-latest` 才是标签名**，冒号后面那串是 job 容器镜像。
+  `runs-on: ubuntu-latest` 匹配的是标签名，写错或没写都会出现
+  「没有匹配 ubuntu-latest 标签的在线运行器」。
 
 镜像用 `catthehacker/ubuntu:act-22.04` 而不是默认的 `node:16-bullseye`：
 前者自带 `sudo`、`apt`、`gcc`、`python3`，流水线里的环境初始化步骤才跑得通。
 
-### 3. runner 配置（`/srv/act-runner/config.yaml`）
+如果服务器上没有 Docker，或想让构建直接吃满整机性能（不再套一层容器），
+改用 host 模式标签，此时不再需要挂载，`/srv/wrt-cache` 就是宿主机真实路径：
+
+```bash
+  --labels ubuntu-latest:host
+```
+
+前提是运行 act_runner 的用户有**免密 sudo**，否则「初始化编译环境」装依赖那步会失败。
+
+### 3. 启动 runner
+
+先写配置文件 `/srv/act-runner/config.yaml`：
 
 ```yaml
 log:
@@ -77,7 +94,19 @@ container:
     -v /srv/wrt-build:/srv/wrt-build
 ```
 
-改完 `docker restart act_runner`。
+然后启动（同样要 `-w /data`，否则读不到第 2 步生成的 `.runner`）：
+
+```bash
+docker run -d --name gitea-runner --restart always \
+  -v /srv/act-runner:/data -w /data \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  gitea/act_runner:latest
+
+# 确认已连上 Gitea
+docker logs -f gitea-runner        # 出现 "runner: xxx, with labels: [ubuntu-latest]" 即正常
+```
+
+改配置后 `docker restart gitea-runner` 生效。
 
 ### 4. 工作流里的两个路径
 
@@ -129,6 +158,26 @@ Gitea 的 cron 按 **UTC** 解析。想改时间就改这行，注意换算。
   `GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}` 换成 `secrets.RELEASE_TOKEN`。
 
 ## 五、常见问题
+
+**提示「没有匹配 ubuntu-latest 标签的在线运行器」（运行 0 秒、从未启动）**
+说明 Gitea 找不到能接这个任务的 runner，任务只是排队后直接丢弃。按顺序查三处：
+
+1. **runner 是否在跑**：`docker ps | grep -i runner`。在跑但后台显示离线，看
+   `docker logs -f gitea-runner`，多半是 token 失效或连不上 `GITEA_INSTANCE_URL`。
+2. **标签是否对得上**：后台看该 runner 的标签列表。`ubuntu-latest:docker://xxx`
+   这种写法里，冒号前的 `ubuntu-latest` 才是标签名；如果只看到 `docker`、`linux`、
+   `self-hosted`、`my-runner` 之类，就是注册时没给 `--labels`，页面显示「在线」
+   也接不了活。
+3. **作用域对不对**：仓库级 runner 只服务注册它的那个仓库；组织级要显式授权，
+   实例级才对全部仓库生效。
+
+**标签注册后不能改**，只能重来：
+
+```bash
+docker rm -f gitea-runner
+rm -rf /srv/act-runner/.runner /srv/act-runner/config.yaml
+# 然后按「一、准备 runner」第 2 步重新 register，再用第 3 步的配置启动
+```
 
 **卡在「初始化编译环境」**
 镜像里没有 `sudo`，或者 runner 不是 root。换 `catthehacker/ubuntu:act-22.04`
