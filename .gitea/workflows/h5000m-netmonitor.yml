@@ -98,6 +98,15 @@ jobs:
           # runner 镜像里可能预置了 sha 不一致的第三方源，先摘掉再 update
           $SUDO rm -f /etc/apt/sources.list.d/google-chrome*.list
 
+          # 守卫：本流程按 Debian/Ubuntu 的工具链编写（apt + glibc）。若 runner 配成
+          # host 模式跑在 Alpine 这类 musl 发行版上，OpenWrt buildroot 本身就跑不通，
+          # 这里提前给出可执行的修复建议，而不是抛 apt-get: not found。
+          if ! command -v apt-get >/dev/null 2>&1; then
+            . /etc/os-release 2>/dev/null || true
+            echo "::error::当前 runner 运行于 ${PRETTY_NAME:-未知系统}，没有 apt-get。请改为容器模式标签 ubuntu-latest:docker://catthehacker/ubuntu:act-22.04（Alpine 等 musl 系统不能直接编 OpenWrt）"
+            exit 1
+          fi
+
           $SUDO apt-get -yqq update || $SUDO apt-get -yqq update
           $SUDO apt-get -yqq install dos2unix libfuse-dev ccache file rsync
 

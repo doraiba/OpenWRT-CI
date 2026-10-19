@@ -60,14 +60,15 @@ docker run --rm \
 镜像用 `catthehacker/ubuntu:act-22.04` 而不是默认的 `node:16-bullseye`：
 前者自带 `sudo`、`apt`、`gcc`、`python3`，流水线里的环境初始化步骤才跑得通。
 
-如果服务器上没有 Docker，或想让构建直接吃满整机性能（不再套一层容器），
-改用 host 模式标签，此时不再需要挂载，`/srv/wrt-cache` 就是宿主机真实路径：
+只有在宿主机是 **Debian/Ubuntu** 时，才可以考虑 host 模式标签（省掉容器那层开销）：
 
 ```bash
   --labels ubuntu-latest:host
 ```
 
-前提是运行 act_runner 的用户有**免密 sudo**，否则「初始化编译环境」装依赖那步会失败。
+此时不需要挂载，`/srv/wrt-cache` 就是宿主机真实路径；前提是运行 act_runner 的用户有
+**免密 sudo**，否则「初始化编译环境」装依赖那步会失败。
+**Alpine 等 musl 发行版不要用 host 模式**，原因见文末 FAQ。
 
 ### 3. 启动 runner
 
@@ -166,12 +167,18 @@ Gitea 的 cron 按 **UTC** 解析。想改时间就改这行，注意换算。
    `docker logs -f gitea-runner`，多半是 token 失效或连不上 `GITEA_INSTANCE_URL`。
 2. **标签是否对得上**：后台看该 runner 的标签列表。`ubuntu-latest:docker://xxx`
    这种写法里，冒号前的 `ubuntu-latest` 才是标签名；如果只看到 `docker`、`linux`、
-   `self-hosted`、`my-runner` 之类，就是注册时没给 `--labels`，页面显示「在线」
-   也接不了活。
+   `self-hosted`、`my-runner`、`act_runner` 之类，就是注册时没给 `--labels`，
+   页面显示「空闲/在线」也接不了活。
 3. **作用域对不对**：仓库级 runner 只服务注册它的那个仓库；组织级要显式授权，
    实例级才对全部仓库生效。
 
-**标签注册后不能改**，只能重来：
+**runner 在线但标签不对，怎么修**
+
+runner 列表最右侧有铅笔图标，点进去看能不能直接改 **标签**：能改就填
+`ubuntu-latest:docker://catthehacker/ubuntu:act-22.04`（一行一个），保存后立刻生效，
+不用重启。Gitea 较新版本支持这样改，老版本该页面只允许改描述和重置 token。
+
+改不了就只能重来：
 
 ```bash
 docker rm -f gitea-runner
@@ -179,10 +186,19 @@ rm -rf /srv/act-runner/.runner /srv/act-runner/config.yaml
 # 然后按「一、准备 runner」第 2 步重新 register，再用第 3 步的配置启动
 ```
 
+**服务器是 Alpine / 其它 musl 系统时**
+
+别用 `ubuntu-latest:host`。OpenWrt buildroot 的宿主机工具链按 glibc 编写，
+在 Alpine 上编不过去，而且流水线的依赖安装用的是 `apt-get`，Alpine 只有 `apk`。
+正确做法是保持**容器模式**标签 `ubuntu-latest:docker://catthehacker/ubuntu:act-22.04`，
+让任务跑在 Ubuntu 容器里，Alpine 只负责跑 Docker。工作流里已加守卫：万一配成
+host 模式，会在「初始化编译环境」直接报「当前 runner 运行于 Alpine Linux，没有
+apt-get」并给出这条建议，不会抛出难懂的 `apt-get: not found`。
+
 **卡在「初始化编译环境」**
 镜像里没有 `sudo`，或者 runner 不是 root。换 `catthehacker/ubuntu:act-22.04`
 镜像，或用 `ubuntu-latest:host` 标签让它在宿主机上直接跑（此时需要 runner
-用户有免密 sudo）。
+用户有免密 sudo；宿主机须为 Debian/Ubuntu）。
 
 **缓存一直提示不可写**
 container 忘了挂载 `/srv/wrt-cache`，或宿主机目录属主不是容器内用户。执行
