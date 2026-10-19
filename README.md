@@ -129,7 +129,7 @@
 - 👨‍👩‍👧 **家长控制**（H5000M）：`OpenAppFilter`（OAF）按应用 / MAC 过滤，含上网记录、白名单与实时连接视图
 - 📊 **多网口流量监控**（H5000M）：`Bandix Plus` 按接口 / 应用统计吞吐，BPF 内核采集，自带 Web 面板
 - 🐳 **Docker 支持**（X86）：`luci-app-dockerman` 容器管理
-- 📦 **Podman 容器**（H5000M 自用）：`luci-app-podman` + `podman` 5.2.2，容器 / 镜像 / 卷 / 网络 / Pod 全量管理；首次开机自动把 netavark 防火墙驱动切到 nftables（25.12 无 iptables 二进制）并与 dnsmasq 错开 `10.88.0.1:53`，开箱即可创建容器
+- 📦 **Podman 容器**（H5000M 自用）：`luci-app-podman` + `podman` 5.2.2，容器 / 镜像 / 卷 / 网络 / Pod 全量管理；首次开机自动把 netavark 防火墙驱动切到 nftables（本固件无 iptables 二进制）、与 dnsmasq 错开 `10.88.0.1:53`、给 `podman0` 建独立 fw4 zone 并放行 `lan ↔ podman` 与 `podman → wan`，开箱即可创建容器、容器能出网、局域网可直接访问 `-p` 映射端口
 
 ---
 

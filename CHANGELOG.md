@@ -1,4 +1,54 @@
 # 更新日志
+## [2026-10-19] 修复：局域网访问 Podman 映射端口不通（补 fw4 zone + 跨 zone 转发）
+
+### 现象
+
+`podman run -d -p 8080:80 nginx` 之后容器正常（`podman ps` 在、`podman exec` 里 curl
+`127.0.0.1` 正常），但从局域网访问 `http://192.168.10.1:8080` 无响应。
+
+### 根因
+
+netavark 的 DNAT 是生效的——`nft list table inet netavark` 能看到 `dnat ip to 10.88.0.x:80`。
+问题在 DNAT **之后**：目的地址已从 `192.168.10.1` 变成 `10.88.0.x`，包不再发给路由器自身，
+而是要走 **FORWARD**。`podman0` 不属于任何 fw4 zone，fw4 的 forward 链对未归属网络的转发
+默认丢弃，包在路由器内部就没了。
+
+注意这不是「访问路由器端口」：`INPUT` 链根本不参与，改 `input` 策略没有任何用。
+
+### 修复
+
+`Scripts/podman/98-podman-network` 增加第三段（幂等，按 zone 名 / device / src-dest 配对判重）：
+
+1. 建 zone `podman`，**按 `device podman0` 绑定**，input / output / forward 全 `ACCEPT`：
+   - 用 device 而不是「建 OpenWrt 接口 + zone 引用 network」：后者会让 netifd 接管
+     `podman0` 这座桥，`/etc/init.d/network reload` 或接口抖动都会把桥拆掉重建，
+     正在跑的容器直接断网。netavark 与 netifd 共存的最省事方式就是让 netifd 完全不管它。
+   - `input ACCEPT`：容器可以访问路由器自身服务（LuCI、代理端口等）。
+2. 补三条跨 zone 转发：
+   - `lan → podman`：局域网访问 `-p` 映射端口
+   - `podman → wan`：容器出网
+   - `podman → lan`：容器访问 NAS / 其他内网设备
+3. 刻意不建 `wan → podman`，容器端口不暴露到公网。
+
+> zone 的 `forward` 选项替代不了上面三条。fw4 为每个 zone 生成的 `forward_<zone>` 链尾部是
+> `jump <zone.forward>_to_<zone.name>`，只匹配本 zone 的出口设备，因此它管的只是 zone 内部
+> 接口之间的转发；跨 zone 一律需要 `config forwarding` 段（见 firewall4 的
+> `templates/ruleset.uc` 中 `chain forward_<zone>` 构造）。误以为「forward ACCEPT 就能访问
+> NAS」会漏掉 `podman → lan`。
+
+已存在承载 `podman0` 的 zone（名字叫 podman 还是别的、手工建的都算）时，不改它的策略，
+只补缺失的 forwarding；同向 forwarding 已存在则跳过。
+
+### 验证
+
+```sh
+nft list chain inet fw4 forward | grep -i podman    # 应看到 iifname "br-lan" ... accept_to_podman
+curl -I http://192.168.10.1:8080                    # 局域网客户端执行
+```
+
+> 从路由器本机 curl `192.168.10.1:8080` 可能仍不通：本机出流量走 OUTPUT，不经过
+> prerouting 的 DNAT 规则。验证容器本身请直连 `10.88.0.x`。
+
 ## [2026-10-19] 新增：Podman 容器网络开箱可用（netavark nftables 驱动 + dnsmasq 避让 53）
 
 ### 现象
@@ -52,8 +102,10 @@ nft list table inet netavark     # 规则表已生成
 podman run --rm -it docker.io/library/busybox ping -c1 223.5.5.5   # 容器出网
 ```
 
-> 注意：LAN 内访问 `-p` 发布端口正常；从 WAN 访问需另在 fw4 放行（DNAT 后首包为 NEW，
-> 默认被 forward 链丢弃）。
+> 修正（见上一条 2026-10-19 记录）：当时以为「LAN 内访问 `-p` 发布端口正常」，实测不成立。
+> DNAT 之后目的地址已是 10.88.0.x，走 FORWARD，`podman0` 不在任何 zone 里就会被 fw4 丢弃。
+> 局域网访问必须补 zone 与 `lan → podman` 转发，已并入 98-podman-network。WAN 访问仍然
+> 默认不放行。
 
 ## [2026-10-19] 新增：H5000M 机型专属插件层（Bandix Plus / OpenAppFilter）
 
