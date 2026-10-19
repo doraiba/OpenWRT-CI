@@ -89,6 +89,10 @@ runner:
   capacity: 1          # 一个 runner 同时只跑一个构建，避免两个 job 抢 CPU
   timeout: 6h
   fetch_timeout: 10m
+  # 标签必须写全「名字:docker://镜像」。只写名字的话任务会跑在 runner 自身环境
+  # （act_runner 官方镜像是 Alpine），OpenWrt 编不动。名字要和 runs-on 一致。
+  labels:
+    - "act_runner:docker://catthehacker/ubuntu:act-22.04"
 
 cache:
   enabled: false       # 本方案用宿主持久目录，不依赖 Gitea 的 cache server
@@ -115,6 +119,10 @@ docker logs -f gitea-runner        # 出现 "runner: xxx, with labels: [act_runn
 ```
 
 改配置后 `docker restart gitea-runner` 生效。
+
+改完标签记得回头看 Gitea 的 runner 列表：「标签」列应当变成带 `docker://` 的长串。
+如果重启后那里还是旧值，说明该字段是注册时写进 Gitea 数据库的，需要页面上用铅笔改，
+或删掉 `/srv/act-runner/.runner` 重新注册。
 
 ### 4. 工作流里的两个路径
 
