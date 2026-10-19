@@ -37,6 +37,10 @@ act_runner 即可运行，不需要 GitHub 托管。
 
 ### 2. 注册 act_runner
 
+> 标签名要和 `.gitea/workflows/h5000m-netmonitor.yml` 里的 `runs-on` 一致。
+> 本仓库当前写的是 `runs-on: act_runner`，所以下面命令里的标签名也用 `act_runner`；
+> 想换成 `ubuntu-latest` 之类，只要两处同时改，名字本身不影响功能。
+
 ```bash
 # 0. token 从「仓库设置 → Actions → Runner」或「站点管理 → Actions → Runners」创建
 docker run --rm \
@@ -46,16 +50,19 @@ docker run --rm \
     --instance https://git.example.com \
     --token <RUNNER_TOKEN> \
     --name wrt-builder \
-    --labels ubuntu-latest:docker://catthehacker/ubuntu:act-22.04
+    --labels act_runner:docker://catthehacker/ubuntu:act-22.04
 ```
 
 两个容易漏的地方：
 
 - **`-w /data` 不能省**。`register` 会把凭证写到当前工作目录的 `.runner` 文件，
   不指定 `-w /data` 就会写进容器临时目录，容器一退就没了，于是下次启动显示「未注册」。
-- **`--labels` 里的 `ubuntu-latest` 才是标签名**，冒号后面那串是 job 容器镜像。
-  `runs-on: ubuntu-latest` 匹配的是标签名，写错或没写都会出现
-  「没有匹配 ubuntu-latest 标签的在线运行器」。
+- **`--labels` 里的冒号前才是标签名**，冒号后面那串是 job 容器镜像。
+  `runs-on` 匹配的是标签名，写错或没写都会出现
+  「没有匹配 xx 标签的在线运行器」。
+- **名字后面那截 `docker://镜像` 不能省**。省了也能注册、也能接活，但任务会直接
+  跑在 runner 自身环境里（act_runner 官方镜像是 Alpine），OpenWrt 编不过去；
+  流水线会在「初始化编译环境」报「当前 runner 运行于 Alpine Linux，没有 apt-get」。
 
 镜像用 `catthehacker/ubuntu:act-22.04` 而不是默认的 `node:16-bullseye`：
 前者自带 `sudo`、`apt`、`gcc`、`python3`，流水线里的环境初始化步骤才跑得通。
@@ -104,7 +111,7 @@ docker run -d --name gitea-runner --restart always \
   gitea/act_runner:latest
 
 # 确认已连上 Gitea
-docker logs -f gitea-runner        # 出现 "runner: xxx, with labels: [ubuntu-latest]" 即正常
+docker logs -f gitea-runner        # 出现 "runner: xxx, with labels: [act_runner]" 即正常
 ```
 
 改配置后 `docker restart gitea-runner` 生效。
@@ -174,16 +181,23 @@ Gitea 的 cron 按 **UTC** 解析。想改时间就改这行，注意换算。
 
 **runner 在线但标签不对，怎么修**
 
-runner 列表最右侧有铅笔图标，点进去看能不能直接改 **标签**：能改就填
-`ubuntu-latest:docker://catthehacker/ubuntu:act-22.04`（一行一个），保存后立刻生效，
-不用重启。Gitea 较新版本支持这样改，老版本该页面只允许改描述和重置 token。
+先分清标签的**名字**和**镜像**：`act_runner:docker://catthehacker/ubuntu:act-22.04`
+里，冒号前 `act_runner` 是名字（`runs-on` 匹配它），`docker://` 后面才是 job 容器镜像。
+只写 `act_runner` 也能注册成功、能接活，但因为没有镜像，任务会直接跑在 runner 自身的
+环境里（act_runner 镜像基于 Alpine），OpenWrt 编不动。
+
+runner 列表最右侧有铅笔图标，点进去看能不能改 **标签**：改成
+`act_runner:docker://catthehacker/ubuntu:act-22.04` —— **名字保持不变**，只补镜像部分，
+`runs-on` 一行都不用动。保存后立刻生效，不用重启。Gitea 较新版本支持这样改，
+老版本该页面只允许改描述和重置 token。
 
 改不了就只能重来：
 
 ```bash
 docker rm -f gitea-runner
 rm -rf /srv/act-runner/.runner /srv/act-runner/config.yaml
-# 然后按「一、准备 runner」第 2 步重新 register，再用第 3 步的配置启动
+# 然后按「一、准备 runner」第 2 步重新 register（--labels 用 act_runner:docker://...），
+# 再用第 3 步的配置启动
 ```
 
 **服务器是 Alpine / 其它 musl 系统时**
