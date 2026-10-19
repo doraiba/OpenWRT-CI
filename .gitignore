@@ -1,0 +1,8 @@
+# Python 缓存（Scripts/gitea_release.py 运行与语法检查产物）
+__pycache__/
+*.pyc
+
+# 本地 IDE / 智能体工作目录
+.idea/
+.ai/
+.workbuddy/

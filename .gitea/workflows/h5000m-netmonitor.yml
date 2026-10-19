@@ -1,0 +1,530 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2026 VIKINGYFY
+#
+# Gitea Actions 版：H5000M 自用编译（NetMonitor + Podman）
+#
+# 与 GitHub 版的对应关系：
+#   .github/workflows/H5000M-NETMONITOR-AUTO.yml + WRT-CORE.yml
+#     → 本节单文件（Gitea Actions 不支持作业级 reusable workflow）
+#
+# 三处关键差异（都是为了适配自建 runner，且都比原版更快/更稳）：
+#   1. 缓存：不再用 actions/cache，改为把 dl / .ccache / staging_dir 直接软链到
+#      宿主持久目录（WRT_CACHE_DIR）。自建 runner 本地磁盘就是缓存，省掉每轮
+#      1.1GB 上传 + 1.1GB 下载，也不会再因为缓存配额被 LRU 淘汰而退化成冷编译。
+#   2. 触发：Gitea 不支持 workflow_run 串联（原来的「自动清理 → 编译」链路），
+#      改为本工作流直接带 schedule。
+#   3. 发布：gh CLI 换成 Gitea 原生 REST API（Scripts/gitea_release.py）。
+#
+# 首次使用建议先手动跑一次 TEST=true，只验证配置生成不编译。
+
+name: H5000M 自用编译（NetMonitor + Podman）
+
+on:
+  workflow_dispatch:
+    inputs:
+      TEST:
+        description: '仅生成配置，不编译固件（true / false）'
+        required: false
+        default: 'false'
+      PACKAGE:
+        description: '手动追加插件包（多行请用换行隔开）'
+        required: false
+        default: ''
+  schedule:
+    # Gitea 的 cron 走 UTC：13:00 UTC = 北京时间 21:00
+    - cron: '0 13 * * *'
+
+permissions:
+  contents: write
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ---- 配置层（等价于原 matrix 参数）----
+  WRT_CONFIG: H5000M-WIFI-YES-NETMONITOR
+  WRT_THEME: aurora
+  WRT_REPO: https://github.com/VIKINGYFY/immortalwrt.git
+  WRT_BRANCH: owrt
+  WRT_SOURCE: VIKINGYFY/immortalwrt
+  MT_MODE: MT5700
+  WRT_VARIANT: 自用
+
+  # ---- 运行参数 ----
+  WRT_TEST: ${{ github.event.inputs.TEST || 'false' }}
+  WRT_PACKAGE: ${{ github.event.inputs.PACKAGE }}
+  # 宿主持久缓存目录：必须在 runner 容器内可写（建议 bind mount，见 docs/gitea-actions.md）
+  WRT_CACHE_DIR: /srv/wrt-cache
+  # 构建根目录：源码、build_dir 都落在这里，需要 60GB+ 空间。
+  # 留空则用 $GITHUB_WORKSPACE；自建 runner 建议指到挂载的大盘上。
+  WRT_BUILD_ROOT: ''
+
+jobs:
+  build:
+    name: H5000M 自用 · MT5700 方案
+    # 自建 runner 没有 GitHub 的 6 小时硬上限，这里放宽到 6 小时仅作兜底；
+    # 有持久缓存后实际耗时约 3 小时（冷编译另计）。
+    timeout-minutes: 360
+    runs-on: ubuntu-latest
+    steps:
+      # Gitea 的 workspace 由 runner 创建，但不自动检出，这里手动 clone，
+      # 避免依赖外部 actions/checkout（内网 runner 常常拉不到 gitea.com 的镜像）。
+      - name: 检出仓库代码
+        run: |
+          set -e
+          REPO_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git"
+          AUTH_URL="$(echo "$REPO_URL" | sed -E "s#^(https?://)#\1oauth2:${GITHUB_TOKEN}@#")"
+          # 清空残留（act_runner 的工作区可能是上一次运行留下的）后再 clone
+          if [ -n "$(ls -A .)" ]; then find . -mindepth 1 -maxdepth 1 -exec rm -rf {} +; fi
+          git clone --depth=1 --single-branch "$AUTH_URL" .
+          git log -1 --pretty=format:'%h %s'; echo
+
+      - name: 初始化编译环境
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -e
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then
+            if command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else
+              echo "::error::需要 root 或 sudo 才能安装编译依赖，请换用带有 sudo 的 runner 镜像"
+              exit 1
+            fi
+          fi
+
+          # runner 镜像里可能预置了 sha 不一致的第三方源，先摘掉再 update
+          $SUDO rm -f /etc/apt/sources.list.d/google-chrome*.list
+
+          $SUDO apt-get -yqq update || $SUDO apt-get -yqq update
+          $SUDO apt-get -yqq install dos2unix libfuse-dev ccache file rsync
+
+          # 自建 runner 通常常驻同一容器/主机，依赖齐了就不必再跑官方初始化
+          # 脚本（它每次要装几百个包，在自建环境里纯属浪费十几分钟）。
+          if ! command -v gcc >/dev/null 2>&1 \
+             || ! command -v python3 >/dev/null 2>&1 \
+             || ! command -v make >/dev/null 2>&1 \
+             || [ ! -f /usr/include/openssl/ssl.h ]; then
+            echo "构建依赖不完整，执行 immortalwrt 官方初始化脚本"
+            $SUDO bash -c 'bash <(curl -sL https://build-scripts.immortalwrt.org/init_build_environment.sh)'
+          else
+            echo "构建依赖已就绪，跳过官方初始化脚本"
+          fi
+
+          $SUDO timedatectl set-timezone Asia/Shanghai 2>/dev/null || true
+          echo "nproc=$(nproc)"
+
+      - name: 初始化构建变量
+        run: |
+          set -e
+          BUILD_ROOT="${WRT_BUILD_ROOT:-$GITHUB_WORKSPACE}"
+          mkdir -p "$BUILD_ROOT"
+          echo "WRT_BUILD_DIR=$BUILD_ROOT" >> $GITHUB_ENV
+
+          echo "WRT_DATE=$(TZ=UTC-8 date +'%y.%m.%d-%H.%M.%S')" >> $GITHUB_ENV
+          echo "WRT_MARK=${GITHUB_REPOSITORY%%/*}" >> $GITHUB_ENV
+          echo "WRT_INFO=${WRT_SOURCE%%/*}" >> $GITHUB_ENV
+          echo "WRT_TARGET=$(grep -m 1 -oP '^CONFIG_TARGET_\K[\w]+(?=\=y)' ./Config/$WRT_CONFIG.txt)" >> $GITHUB_ENV
+          echo "WRT_WIFI=wifi-yes" >> $GITHUB_ENV
+          echo "WRT_KVER=none" >> $GITHUB_ENV
+          echo "WRT_LIST=none" >> $GITHUB_ENV
+
+          if [ -z "${MT_MODE:-}" ]; then
+            echo "WRT_MT=NONE" >> $GITHUB_ENV
+          else
+            echo "WRT_MT=$MT_MODE" >> $GITHUB_ENV
+          fi
+
+          echo "WRT_DEVICE=${WRT_CONFIG%%-*}" >> $GITHUB_ENV
+
+          # 产品方案段：NETMONITOR 配置固定归「自用」，不进入公开 MT5700 分类
+          case "$WRT_CONFIG" in
+            *-NETMONITOR*) WRT_FLAVOR="自用" ;;
+            *-NETWIZ*)     WRT_FLAVOR="NetWiz" ;;
+            *-FM350*)      WRT_FLAVOR="FM350" ;;
+            *)             WRT_FLAVOR="${MT_MODE:-}" ;;
+          esac
+          echo "WRT_FLAVOR=$WRT_FLAVOR" >> $GITHUB_ENV
+
+          # Release 归组：Tag = <组名>-<YY.MM.DD>
+          if [ -n "${WRT_VARIANT:-}" ]; then
+            WRT_TAG_GROUP="$WRT_VARIANT"
+          elif [ -n "${MT_MODE:-}" ]; then
+            WRT_TAG_GROUP="$MT_MODE"
+          else
+            WRT_TAG_GROUP="BASE"
+          fi
+          echo "WRT_TAG_GROUP=$WRT_TAG_GROUP" >> $GITHUB_ENV
+          echo "WRT_RELEASE_TAG=$(TZ=UTC-8 date +'%y.%m.%d' | sed "s/^/${WRT_TAG_GROUP}-/")" >> $GITHUB_ENV
+          echo "当前机型=${WRT_CONFIG} MT_MODE=${MT_MODE:-NONE} 变体=${WRT_VARIANT:-（无）} 归组=${WRT_TAG_GROUP}"
+
+      - name: 拉取 OpenWrt 源码并挂载持久缓存
+        run: |
+          set -e
+          BUILD_DIR="$WRT_BUILD_DIR/wrt"
+          rm -rf "$BUILD_DIR"
+          git clone --depth=1 --single-branch --branch "$WRT_BRANCH" "$WRT_REPO" "$BUILD_DIR"
+          cd "$BUILD_DIR"
+          echo "WRT_HASH=$(git log -1 --pretty=format:'%h')" >> $GITHUB_ENV
+
+          # GitHub 上的国内镜像清理（与上游行为保持一致）
+          if [ -f "./scripts/projectsmirrors.json" ]; then
+            sed -i '/.cn\//d; /tencent/d; /aliyun/d' "./scripts/projectsmirrors.json"
+          fi
+
+          # 缓存目录：dl 按源码+分支共享，工具链+ccache 按 target+源码共享。
+          # 用软链而不是复制，编译过程直接读写宿主缓存，零额外开销。
+          # 目录不可写时自动降级为无缓存（慢但能跑），不会中断构建。
+          if [ -d "$WRT_CACHE_DIR" ] && [ -w "$WRT_CACHE_DIR" ]; then
+            mkdir -p "$WRT_CACHE_DIR/dl-$WRT_INFO-$WRT_BRANCH" \
+                     "$WRT_CACHE_DIR/ccache-$WRT_TARGET" \
+                     "$WRT_CACHE_DIR/staging-$WRT_TARGET-$WRT_INFO"
+            ln -sfn "$WRT_CACHE_DIR/dl-$WRT_INFO-$WRT_BRANCH" ./dl
+            ln -sfn "$WRT_CACHE_DIR/ccache-$WRT_TARGET" .ccache
+            ln -sfn "$WRT_CACHE_DIR/staging-$WRT_TARGET-$WRT_INFO" ./staging_dir
+            echo "缓存已挂载：$WRT_CACHE_DIR"
+            du -sh "$WRT_CACHE_DIR"/staging-* "$WRT_CACHE_DIR"/dl-* 2>/dev/null || true
+          else
+            echo "::warning::缓存目录 $WRT_CACHE_DIR 不存在或不可写，本次为冷编译（会慢 2~3 小时）"
+          fi
+
+      - name: 修正缓存时间戳
+        if: env.WRT_TEST != 'true'
+        run: |
+          set -e
+          if [ -d "./wrt/staging_dir" ]; then
+            # 归一化 stamp 时间戳 + tmp/.build 标记：让 OpenWrt 跳过工具链重建检查。
+            # 少了这一步，恢复回来的工具链会被判定为过期，重新编译 gcc 两遍。
+            find "./wrt/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r DIR; do
+              find "$DIR" -type f -exec touch {} +
+            done
+            mkdir -p ./wrt/tmp && echo "1" > ./wrt/tmp/.build
+            echo "toolchain skiped done!"
+          else
+            echo "caches missed!"
+          fi
+
+      - name: 脚本格式规整（CRLF → LF）
+        run: |
+          set -e
+          find ./ -maxdepth 3 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; -exec chmod +x {} \;
+          find ./wrt/ -maxdepth 2 -type f -iregex ".*\(txt\|sh\)$" -exec dos2unix {} \; 2>/dev/null || true
+
+      - name: 更新 feeds 软件源
+        run: |
+          set -e
+          cd ./wrt/
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      - name: 导入自定义插件
+        run: |
+          set -e
+          cd ./wrt/package/
+          $GITHUB_WORKSPACE/Scripts/Packages.sh
+          $GITHUB_WORKSPACE/Scripts/Handles.sh
+
+      # 必须在 defconfig 之前：make defconfig 只认 package/ 树里此刻已存在的
+      # Makefile，包未就位时 CONFIG_PACKAGE_luci-app-netmonitor=y 是孤立符号，
+      # 会被连依赖一起丢弃，结果是「编译全绿、固件里没有该插件」。
+      - name: 导入 luci-app-netmonitor
+        run: |
+          set -e
+          cd ./wrt/package/
+          $GITHUB_WORKSPACE/Scripts/Packages-NetMonitor.sh
+
+          LUCI_MK="$(pwd)/../feeds/luci/luci.mk"
+          if [ ! -f "$LUCI_MK" ]; then
+            echo "::error::未找到 $LUCI_MK：feeds 未更新或 luci feed 未展开"
+            exit 1
+          fi
+          echo "luci.mk 就位：$LUCI_MK"
+
+      - name: 生成配置并执行 defconfig
+        run: |
+          set -e
+          cd ./wrt/
+
+          cat "$GITHUB_WORKSPACE/Config/$WRT_CONFIG.txt" "$GITHUB_WORKSPACE/Config/GENERAL.txt" >> .config
+
+          # H5000M 机型专属插件层（Bandix Plus / OpenAppFilter）
+          if [[ "${WRT_CONFIG,,}" == h5000m* ]]; then
+            cat "$GITHUB_WORKSPACE/Config/H5000M-EXTRA.txt" >> .config
+          fi
+
+          echo "CONFIG_CCACHE=y" >> .config
+
+          $GITHUB_WORKSPACE/Scripts/Settings.sh
+          $GITHUB_WORKSPACE/Scripts/ApplyMTMode.sh
+
+          # 额外的插件包（手动触发时通过 PACKAGE 输入传入）
+          if [ -n "${WRT_PACKAGE:-}" ]; then
+            printf '%s\n' "$WRT_PACKAGE" | while IFS= read -r PKG; do
+              [ -n "$PKG" ] || continue
+              echo "CONFIG_PACKAGE_${PKG}=y" >> .config
+            done
+          fi
+
+          make defconfig
+
+          # 定向清理（替代 make clean）：make clean 会连同 staging_dir 里的工具链
+          # 一起删除，等于把持久缓存废掉。这里只清按机型变化的 build_dir 与 bin。
+          rm -rf ./build_dir ./bin
+
+      - name: 校验 MT 插件模式互斥
+        run: |
+          set -e
+          cd ./wrt/
+          $GITHUB_WORKSPACE/Scripts/VerifyMTMode.sh
+
+      # 防回归硬断言：包已就位 + .config 已选中，缺任一都会变成「编译全绿、
+      # 固件里却少一个插件」这种最难查的失败。放在编译前，失配立刻红。
+      - name: 校验 H5000M 专属插件已选中
+        run: |
+          set -e
+          cd ./wrt/
+
+          if [ ! -d ./package/luci-app-bandix-plus ]; then
+            echo "::error::package/luci-app-bandix-plus 不存在：Packages.sh 的 H5000M 分支未执行或 clone 失败"
+            exit 1
+          fi
+          for SYM in luci-app-bandix-plus bandix-plus; do
+            if ! grep -qx "CONFIG_PACKAGE_${SYM}=y" ./.config; then
+              echo "::error::.config 未选中 $SYM：Config/H5000M-EXTRA.txt 是否被追加？"
+              grep -i 'bandix' ./.config || echo "（.config 中无任何 bandix 相关行）"
+              exit 1
+            fi
+          done
+
+          for OAF_DIR in oaf open-app-filter luci-app-oaf; do
+            if [ ! -d "./package/$OAF_DIR" ]; then
+              echo "::error::package/$OAF_DIR 不存在：Packages.sh 的 INSTALL_OPENAPPFILTER 未执行"
+              ls -d ./package/*oaf* ./package/*app-filter* 2>/dev/null || echo "（package/ 下无任何 oaf 相关目录）"
+              exit 1
+            fi
+          done
+          for SYM in kmod-oaf appfilter luci-app-oaf luci-i18n-oaf-zh-cn; do
+            if ! grep -qx "CONFIG_PACKAGE_${SYM}=y" ./.config; then
+              echo "::error::.config 未选中 $SYM：feeds 里的旧 open-app-filter 是否已清掉（Duplicate package name 会让整组符号被丢弃）？"
+              grep -i 'oaf\|appfilter' ./.config || echo "（.config 中无任何 oaf / appfilter 相关行）"
+              exit 1
+            fi
+          done
+          echo "Bandix Plus / OpenAppFilter 三件套已就位且已选中"
+
+      - name: 校验 netmonitor / podman 已选中
+        run: |
+          set -e
+          cd ./wrt/
+
+          [ -d ./package/luci-app-netmonitor ] || {
+            echo "::error::package/luci-app-netmonitor 不存在：Packages-NetMonitor.sh 未执行或 clone 失败"; exit 1; }
+
+          for SYM in luci-app-netmonitor luci-app-podman podman luci-app-mt5700; do
+            if ! grep -qx "CONFIG_PACKAGE_${SYM}=y" ./.config; then
+              echo "::error::.config 未选中 $SYM（前端与后端必须分别选中：luci-app-podman 的 LUCI_DEPENDS 不含 +podman）"
+              grep -i "netmonitor\|podman\|mt5700" ./.config || echo "（.config 中无相关行）"
+              exit 1
+            fi
+          done
+
+          if [ ! -x ./files/etc/uci-defaults/98-podman-network ]; then
+            echo "::error::files/etc/uci-defaults/98-podman-network 缺失或不可执行：Handles.sh 的 Podman 段未执行"
+            ls -l ./files/etc/uci-defaults/ 2>/dev/null || echo "（./files/etc/uci-defaults 目录不存在）"
+            exit 1
+          fi
+          echo "netmonitor / podman（含后端与容器网络初始化）/ mt5700 已就位且已选中"
+
+      - name: 预下载源码包
+        if: env.WRT_TEST != 'true'
+        run: |
+          set -e
+          cd ./wrt/
+          # 只在并行下载失败时才做串行兜底
+          make download -j"$(nproc)" || make download -j1
+
+      - name: 编译固件
+        if: env.WRT_TEST != 'true'
+        run: |
+          set -e
+          cd ./wrt/
+
+          export CCACHE_DIR="$(pwd)/.ccache"
+          export CCACHE_MAXSIZE=20G
+          export CCACHE_COMPRESS=true
+          ccache -z 2>/dev/null || true
+
+          # 必须关闭 errexit：run 默认是 bash -e，首次 make 失败会让步骤就地终止，
+          # 重试与诊断分支永远不会执行。
+          set +e -o pipefail
+
+          make -j"$(nproc)" 2>&1 | tee build.log
+          RC=${PIPESTATUS[0]}
+
+          if [ "$RC" -ne 0 ]; then
+            echo "第一次编译失败（rc=$RC），保持并行重试并追加日志"
+            make -j"$(nproc)" V=s 2>&1 | tee -a build.log
+            RC=${PIPESTATUS[0]}
+          fi
+
+          if [ "$RC" -ne 0 ]; then
+            ANN=$(mktemp)
+            : > "$ANN"
+
+            grep -E "ERROR: .*(trying to overwrite|unable to select packages|package version is invalid|breaks:|conflicts with|installed .* is newer)" build.log \
+              | sort -u | head -n 6 >> "$ANN" || true
+            grep -E "^(ERROR: |make(\[[0-9]+\])?: \*\*\* ).*(failed to build|Error [0-9]|too big)" build.log \
+              | sort -u | head -n 4 >> "$ANN" || true
+            grep -E "^ERROR: .*(failed to build|too big)" build.log \
+              | sort -u | head -n 4 >> "$ANN" || true
+            grep -E "^make(\[[0-9]+\])?: \*\*\* .*(Error [0-9]|Stop)" build.log \
+              | sort -u | head -n 4 >> "$ANN" || true
+            if [ ! -s "$ANN" ]; then
+              grep -E "^ERROR: " build.log | sort -u | head -n 8 >> "$ANN" || true
+            fi
+
+            if [ ! -s "$ANN" ]; then
+              echo "::error::未匹配到包级错误行，输出日志末尾 30 行"
+              tail -n 30 build.log
+            else
+              awk '!seen[$0]++' "$ANN" | head -n 12 | while IFS= read -r LINE; do
+                [ -n "$LINE" ] && echo "::error::$LINE"
+              done
+              echo "--- 编译错误上下文 ---"
+              grep -nE "error:|Error [0-9]+|collect2:|undefined reference|too big|trying to overwrite|unable to select packages|package version is invalid|breaks:" build.log \
+                | head -n 30
+            fi
+            rm -f "$ANN"
+          fi
+
+          ccache -s 2>/dev/null || true
+          exit "$RC"
+
+      - name: 输出构建机信息
+        run: |
+          cd ./wrt/ || exit 0
+          echo "======================="
+          lscpu | grep -E "name|Core|Thread"
+          echo "======================="
+          df -h
+          echo "======================="
+          du -h --max-depth=1 2>/dev/null
+          echo "======================="
+          ccache -s 2>/dev/null || true
+
+      - name: 整理并打包固件
+        run: |
+          set -e
+          cd ./wrt/ && mkdir -p ./upload/
+
+          cp -f ./.config ./upload/Config-"$WRT_CONFIG"-"$WRT_MT".txt
+
+          if [ "$WRT_TEST" != 'true' ]; then
+            KVER=$(find ./bin/targets/ -type f -name "*.manifest" -exec grep -oP '^kernel - \K[\d\.]+' {} \; | head -1)
+            echo "WRT_KVER=${KVER:-none}" >> $GITHUB_ENV
+
+            # 插件清单落地成文件：Gitea 的 GITHUB_ENV 多行写入不如 GitHub 稳，
+            # 发布步骤直接 cat 这个文件拼进 Release 正文。
+            find ./bin/targets/ -type f -name "*.manifest" -exec grep -hoP '^luci-(app|theme)[^ ]*' {} \; \
+              | sort -u | awk '{printf "- `%s`\n", $0}' > ./upload/plugins.md || true
+            [ -s ./upload/plugins.md ] || echo "（未采集到插件清单）" > ./upload/plugins.md
+
+            find ./bin/targets/ -iregex ".*\(buildinfo\|json\|sha256sums\|packages\)$" -exec rm -rf {} +
+
+            # 固件统一重命名：<设备>-<产品/方案>-<固件类型>.<扩展名>
+            for FILE in $(find ./bin/targets/ -type f -iname "*$WRT_TARGET*"); do
+              BASE=$(basename "$FILE")
+              case "$BASE" in
+                *.bin|*.img|*.gz|*.vmdk) ;;
+                *) mv -f "$FILE" "./upload/$BASE"; continue ;;
+              esac
+              EXT=$(echo "$BASE" | cut -d '.' -f 2-)
+              STEM="${BASE%.*}"
+              case "$STEM" in
+                *sysupgrade*)   TYPE=sysupgrade ;;
+                *factory*)      TYPE=factory ;;
+                *initramfs*)    TYPE=initramfs ;;
+                *recovery*)     TYPE=recovery ;;
+                *combined-efi*) TYPE=efi ;;
+                *combined*)     TYPE=combined ;;
+                *rootfs*)       TYPE=rootfs ;;
+                *kernel*)       TYPE=kernel ;;
+                *)              TYPE="" ;;
+              esac
+              if [ -n "$WRT_FLAVOR" ]; then
+                NEW_BASE="$WRT_DEVICE-$WRT_FLAVOR"
+              else
+                NEW_BASE="$WRT_DEVICE"
+              fi
+              [ -n "$TYPE" ] && NEW_BASE="$NEW_BASE-$TYPE"
+              NEW_FILE="$NEW_BASE.$EXT"
+              if [ -e "./upload/$NEW_FILE" ]; then
+                FS=$(echo "$STEM" | grep -ioE 'squashfs|ext4' | tail -n 1 || true)
+                if [ -n "$FS" ] && [ ! -e "./upload/$NEW_BASE-$FS.$EXT" ]; then
+                  NEW_FILE="$NEW_BASE-$FS.$EXT"
+                else
+                  SUFFIX=$(echo "$BASE" | md5sum | cut -c 1-6)
+                  NEW_FILE="$NEW_BASE-$SUFFIX.$EXT"
+                fi
+              fi
+              mv -f "$FILE" "./upload/$NEW_FILE"
+            done
+
+            find ./bin/targets/ -type f -exec mv -f {} ./upload/ \; 2>/dev/null || true
+
+            # 释放 40GB 级别的 build_dir；staging 是软链，rm 只删链接、缓存内容保留
+            make clean -j"$(nproc)" || true
+          fi
+
+          ls -lh ./upload/
+
+      - name: 发布到 Gitea Release
+        if: env.WRT_TEST != 'true'
+        run: |
+          set -e
+          BODY="$GITHUB_WORKSPACE/release_body.md"
+
+          {
+            cat <<'BODY_HEAD'
+          > 本仓库按「产品/配置本身」在 Releases 中分类，认准 Tag 组名下载即可。
+
+          ## 文件名解读
+
+          ```
+          <设备>-<产品/方案>-<固件类型>.<扩展名>
+          ```
+
+          设备：`H5000M`；固件类型：`sysupgrade` / `factory` / `initramfs` / `recovery` / `efi` / `combined` / `rootfs`。
+
+          ## 默认出厂参数
+
+          | 项目 | 值 |
+          | :--- | :--- |
+          BODY_HEAD
+            printf '| 后台地址 | `%s` |\n' "${WRT_IP:-见配置文件}"
+            printf '| 后台密码 | `%s` |\n' "${WRT_PW:-见配置文件}"
+            printf '| Wi-Fi | `%s` / `%s`（WPA 混合加密） |\n' "${WRT_SSID:-见配置文件}" "${WRT_WORD:-见配置文件}"
+            echo
+            echo "## 本批构建信息"
+            echo
+            printf -- '- 源码：`%s`（`%s` @ `%s`）\n' "$WRT_REPO" "$WRT_BRANCH" "$WRT_HASH"
+            printf -- '- 配置：`%s` · MT 模式：`%s` · 归组：`%s`\n' "$WRT_CONFIG" "$WRT_MT" "$WRT_TAG_GROUP"
+            printf -- '- 平台：`%s` · 内核：`%s` · 构建于 `%s`\n' "$WRT_TARGET" "$WRT_KVER" "$WRT_DATE"
+            echo
+            echo "<details>"
+            echo "<summary>插件清单（点开展开）</summary>"
+            echo
+            cat ./wrt/upload/plugins.md
+            echo
+            echo "</details>"
+          } > "$BODY"
+
+          python3 "$GITHUB_WORKSPACE/Scripts/gitea_release.py" \
+            --tag "$WRT_RELEASE_TAG" \
+            --body-file "$BODY" \
+            --assets-dir ./wrt/upload
+
+      - name: 失败时输出构建机信息
+        if: failure()
+        run: |
+          df -h || true
+          free -h || true
+          du -sh ./wrt/build_dir ./wrt/staging_dir "$WRT_CACHE_DIR"/* 2>/dev/null || true
