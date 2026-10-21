@@ -682,6 +682,50 @@ UPDATE_VERSION() {
 #UPDATE_VERSION "软件包名" "测试版，true，可选，默认为否"
 #UPDATE_VERSION "sing-box"
 
+# ===== libffi 供给漂移兜底（2026-10-21）=====
+# immortalwrt/packages 于 2026-10-19 提交 70ac3a84「libffi: move to core repo」，
+# 把 libs/libffi 从 packages feed 迁到核心仓库 immortalwrt/immortalwrt 的
+# package/libs/libffi；但 VIKINGYFY/immortalwrt 的 owrt 分支尚未同步该移动
+# （其 package/libs 下没有 libffi）。于是两边都不提供这个包，feeds 解析阶段只打
+# 一行容易被忽略的告警：
+#   WARNING: Makefile 'package/feeds/packages/glib2/Makefile' has a dependency on
+#            'libffi', which does not exist
+# 直到打包阶段才真正炸掉：
+#   Package glib2-gobject is missing dependencies for the following libraries:
+#   libffi.so.8
+#   ERROR: package/feeds/packages/glib2 failed to build.
+# glib2 只由 podman 依赖链引入（podman → glib2 → libffi），所以不带 podman 的
+# 上游配置完全不受影响，表现为「只有自用配置构建失败」。
+#
+# 修复：core repo 的 package/libs/libffi 只有一个自包含 Makefile（3.4.7-r1，
+# 与迁移前 feed 里的版本、PKG_HASH 完全一致，无 patches 目录），补回该文件即可
+# 让 glib2 / lua-ffi 正常解析依赖。兜底对所有配置生效；一旦 VIKINGYFY 同步了这次
+# 目录移动，首个 [ -f ] 判定会直接跳过，不会覆盖上游更新的版本。
+FIX_LIBFFI_FEED_DRIFT() {
+	[ -f ./package/libs/libffi/Makefile ] && {
+		echo "libffi: package/libs/libffi 已存在，无需补回"
+		return 0
+	}
+	if ls -d ./package/feeds/*/libffi >/dev/null 2>&1; then
+		echo "libffi: feeds 仍提供该包，无需补回"
+		return 0
+	fi
+
+	echo "libffi: feed 与核心仓库均缺失，从 immortalwrt/immortalwrt 补回"
+	mkdir -p ./package/libs/libffi
+	if ! curl -fsSL --retry 3 --retry-delay 2 -o ./package/libs/libffi/Makefile \
+		"https://raw.githubusercontent.com/immortalwrt/immortalwrt/master/package/libs/libffi/Makefile"; then
+		echo "::error::libffi 补回失败：core repo Makefile 下载出错，glib2 将无法构建"
+		exit 1
+	fi
+	if ! grep -q '^PKG_NAME:=libffi' ./package/libs/libffi/Makefile; then
+		echo "::error::libffi 补回失败：下载到的 Makefile 内容异常"
+		exit 1
+	fi
+	echo "libffi: 已补回 $(grep -m1 '^PKG_VERSION' ./package/libs/libffi/Makefile | cut -d= -f2)（供 glib2 / lua-ffi 解析依赖）"
+}
+FIX_LIBFFI_FEED_DRIFT
+
 #引入私有扩展脚本
 if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -f "$GITHUB_WORKSPACE/Scripts/PRIVATE.sh" ]; then
 	source "$GITHUB_WORKSPACE/Scripts/PRIVATE.sh"
