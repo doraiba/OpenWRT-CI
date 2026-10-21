@@ -98,10 +98,15 @@ CONFIG_PACKAGE_libseccomp=y
 CONFIG_PACKAGE_libgpgme=y
 CONFIG_PACKAGE_nsenter=y
 CONFIG_PACKAGE_zoneinfo-simple=y
-# 容器网络：veth 是 feed 里 podman 的硬依赖；br-netfilter 让容器经 bridge
-# 出网时能命中 NAT 规则（netavark 写的 nft 规则链）。
+# 容器网络：veth 是 feed 里 podman 的硬依赖（podman0 网桥 + 每个容器的 veth 对）。
+#
+# ⚠️ 不要加 kmod-br-netfilter（2026-10-21 移除）。先前注释称「让容器经 bridge
+# 出网时能命中 NAT 规则」，这是误解：容器 veth → podman0 的包直接进 IP 栈走
+# PREROUTING / FORWARD，netavark 写在 inet 表里的 nft 规则本来就能命中，不需要
+# bridge netfilter。它的副作用反而很致命 —— 模块一加载，
+# net.bridge.bridge-nf-call-ip6tables 默认变成 1，桥上所有 IPv6 流量被迫多过
+# 一层 ip6_tables，实测刷本固件后 IPv6 异常（同一配置的上游版本无此包则正常）。
 CONFIG_PACKAGE_kmod-veth=y
-CONFIG_PACKAGE_kmod-br-netfilter=y
 # OpenWrt 根文件系统本身就是 overlayfs，podman 默认 overlay driver 不能再叠
 # 一层（overlay-on-overlay 不被支持），因此装 fuse-overlayfs 作为可选后端；
 # 实际用哪个 driver 由 /etc/containers/storage.conf 决定。
