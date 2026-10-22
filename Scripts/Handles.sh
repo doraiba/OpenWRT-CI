@@ -363,6 +363,30 @@ case "$WRT_CONFIG" in
 	;;
 esac
 
+#IPv6 公网前缀下发修复（H5000M 系列，含 MT5700 / FM350 各变体）
+# 板级默认 network 的 lan 段是按「有线 WAN + wan6」写的：
+#   option ip6class 'wan6' / option ip6assign '60'
+# 而实际拨号接口是 MT5700M / MT5700Mv6，上游只委派一条 /64。类名对不上 +
+# 长度不够，前缀永远分配不到 br-lan，odhcpd 继而打印
+# 「No default route present, setting ra_lifetime to 0!」，表现为 LAN 只有
+# 链路本地地址、没有公网 IPv6。修复脚本由 files/etc/uci-defaults/98-ipv6-prefix
+# 在首次开机改好（内部先判断 MT5700M 是否存在，FM350 等变体自动跳过）。
+case "$WRT_CONFIG" in
+*H5000M*)
+	IPV6_UD_SRC="$GITHUB_WORKSPACE/Scripts/ipv6/98-ipv6-prefix"
+	WRT_FILES="$PKG_PATH/../files"
+
+	if [ -f "$IPV6_UD_SRC" ]; then
+		mkdir -p "$WRT_FILES/etc/uci-defaults/"
+		cp -f "$IPV6_UD_SRC" "$WRT_FILES/etc/uci-defaults/98-ipv6-prefix"
+		chmod +x "$WRT_FILES/etc/uci-defaults/98-ipv6-prefix"
+		echo "IPv6 prefix uci-defaults injected!"
+	else
+		echo "WARNING: $IPV6_UD_SRC not found; LAN 侧公网 IPv6 需手工修正 ip6class/ip6assign" >&2
+	fi
+	;;
+esac
+
 #修复 dockerd 在 CI runner 上的构建失败
 # 根因：moby 的 hack/make/binary-daemon 中 copy_binaries() 在宿主已安装 docker
 # （存在 /usr/local/bin/runc）且同架构时，会尝试从宿主 PATH 拷贝

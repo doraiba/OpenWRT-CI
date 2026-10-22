@@ -1,0 +1,62 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# IPv6 前缀下发修复（H5000M + MT5700 模组，首次开机执行一次）
+# 由 Scripts/Handles.sh 复制到 files/etc/uci-defaults/98-ipv6-prefix，
+# 首次开机执行一次，退出码为 0 时脚本自身被删除。
+#
+# 症状：路由器 WAN 侧明明已经拿到公网前缀和默认路由，LAN 设备却只有链路本地
+# 地址，ping6 外网不通，看起来像「有内网 IPv6、没有公网 IPv6」。
+#
+# 根因：板级默认 /etc/config/network 的 lan 段是按「有线 WAN + wan6」写的：
+#     option ip6class 'wan6'
+#     option ip6assign '60'
+# 而本机实际拨号接口是 MT5700M / MT5700Mv6 —— 模组以 DHCP 方式下发一条 /64，
+# 前缀的 class 名就是 "MT5700Mv6"。两道门同时卡住：
+#
+#   1. ip6class 只认 wan6 类，MT5700Mv6 带来的前缀被过滤掉，netifd 打警告：
+#        You have delegated IPv6-prefixes but haven't assigned them to any
+#        interface. Did you forget to set option ip6assign on your lan-interfaces?
+#      ubus 里能看到前缀存在但 assigned 为空。
+#   2. 即使类名对上，ip6assign 要 60 位而上游只给 /64，同样分配不出来。
+#
+# 结果 br-lan 只剩 fe80，odhcpd 拿不到可下发的公网前缀，持续打印：
+#     No default route present, setting ra_lifetime to 0!
+# RA 里路由器寿命为 0，终端就算通过 ULA 凑出地址也没有默认网关。
+#
+# 处理：去掉 ip6class 过滤、把 ip6assign 收敛到 64 —— 与上游委派长度一致。
+# 路由器自身在 br-lan 上会拿到 <前缀>::1，终端走 SLAAC 拿到同前缀的地址，
+# 回程由 odhcpd 的 ndproxy 在模组侧代答 NDP。
+#
+# 幂等：已是目标值则跳过，不做多余 commit。非 MT5700 模组（如 FM350 变体）
+# 上 MT5700M 接口不存在，脚本直接退出，不改动任何配置。
+
+LAN_IF=lan
+
+# 只在确实是 MT5700 模组拨号时动手；其它上行保持板级默认行为
+if ! uci -q get network.MT5700M >/dev/null 2>&1; then
+	exit 0
+fi
+
+changed=0
+
+# 上游只委派 /64，ip6assign 大于 64 时永远分配不到 LAN
+if [ "$(uci -q get network.$LAN_IF.ip6assign)" != "64" ]; then
+	uci set network.$LAN_IF.ip6assign='64'
+	changed=1
+	echo "ipv6: $LAN_IF.ip6assign -> 64（上游仅委派 /64）"
+fi
+
+# ip6class 白名单里没有实际承载前缀的接口类，直接把过滤去掉
+if uci -q get network.$LAN_IF.ip6class >/dev/null 2>&1; then
+	uci -q delete network.$LAN_IF.ip6class
+	changed=1
+	echo "ipv6: 已移除 $LAN_IF.ip6class 过滤（原值只含 wan6，与 MT5700Mv6 不符）"
+fi
+
+if [ "$changed" = "1" ]; then
+	uci commit network
+	echo "ipv6: network 配置已提交，network 服务随后启动时生效"
+fi
+
+exit 0
