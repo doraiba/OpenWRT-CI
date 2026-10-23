@@ -29,12 +29,18 @@
 # 回程由 odhcpd 的 ndproxy 在模组侧代答 NDP。
 #
 # 幂等：已是目标值则跳过，不做多余 commit。非 MT5700 模组（如 FM350 变体）
-# 上 MT5700M 接口不存在，脚本直接退出，不改动任何配置。
+# 上没有 at-webserver，脚本直接退出，不改动任何配置。
+#
+# ⚠️ 判定条件不能写成 `uci -q get network.MT5700M`（首版即为如此，结果在真机上
+# 静默失效）：MT5700M 是 /etc/init.d/at-webserver 在 S99 阶段才创建/复用的，
+# 而 uci-defaults 在 boot 阶段就执行完了，那时 uci 里还没有这个 section，
+# 脚本会误判成「不是 MT5700 机型」直接 exit 0 并自删，修复永远不生效。
+# 因此改为看模组应用自身是否随镜像安装（与执行时机无关）；同时保留
+# network.MT5700M 的检查，覆盖「接口已存在时手工重跑本脚本」的场景。
 
 LAN_IF=lan
 
-# 只在确实是 MT5700 模组拨号时动手；其它上行保持板级默认行为
-if ! uci -q get network.MT5700M >/dev/null 2>&1; then
+if [ ! -x /etc/init.d/at-webserver ] && ! uci -q get network.MT5700M >/dev/null 2>&1; then
 	exit 0
 fi
 
