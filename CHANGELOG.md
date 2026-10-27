@@ -1,4 +1,67 @@
 # 更新日志
+
+## [2026-10-27] 修复 firewall4 客制补丁失配导致的编译中断（新增补丁上下文自动重定基）
+
+### 背景
+
+上游 firewall4 升级到 `2026-10-26~bac1d656` 后，immortalwrt 自带的
+`001-firewall4-add-support-for-fullcone-nat.patch` 第 8 个 hunk 打不上：
+
+```
+patching file root/usr/share/ucode/fw4.uc
+Hunk #8 FAILED at 2261.
+1 out of 8 hunks FAILED
+make[3]: *** [Makefile:60: ...prepared...] Error 1
+ERROR: package/network/config/firewall4 failed to build.
+```
+
+原因是上游把 `zone.dflags.helper` 的初值由 `true` 改为 `false`（改为在 helper
+循环里按 `helper.available` 逐个置位），而补丁把该行当作上下文行，内容对不上
+即整包 prepare 失败，X86 / H5000M / AP3000M 全部变体会在开局 40 分钟处挂掉。
+
+### 改动
+
+- 新增 `Scripts/PatchRebase.py`：客制补丁上下文自动重定基工具。先用
+  `patch --dry-run` 判定补丁能否原样应用，能打的一字不改；打不上时按
+  「删除行块在目标文件中的唯一匹配」作为锚点重建 hunk 上下文（只重建上下文，
+  绝不改写 `+` / `-` 增删内容），重建结果必须整体 dry-run 通过才写回，
+  否则保持原补丁不变并非 0 退出；
+- `.github/workflows/WRT-CORE.yml`：在「保存缓存（下载源码包）」之后新增
+  「校正客制补丁上下文（上游源码漂移兜底）」步骤，对
+  `package/network/config/firewall4` 执行上述预检。耗时约 2 秒，
+  上游把补丁补齐后自动 no-op；
+- `README.md`：`Scripts/` 目录树同步补充新脚本。
+
+### 说明
+
+- 预检在 `build_dir` 解包之前完成，失败会立即中止并给出具体 hunk，
+  不再白跑完整编译；
+- 重建后的补丁经实测与人工修正版逐字节一致（`fw4.uc` 全部 8 个 hunk 通过，
+  fullcone 的 IPv4/IPv6 分支与 `auto_helper` 判定均保持原语义）；
+- 该脚本不绑定单个包，`--package` 可指向任意带 `patches/` 的包，
+  后续其它上游漂移可复用。
+
+## [2026-10-26] H5000M 风扇插件切换到 LianXia233 分支（3.2.0 原生 Rust 控制器）
+
+### 改动
+
+- `Scripts/Packages.sh`：`luci-app-h5000m-fancontrol` 的上游源由
+  `FAN789/luci-app-h5000m-fancontrol` 切换为
+  `LianXia233/luci-app-h5000m-fancontrol`（3.2.0：原生 Rust 静态控制器、
+  六标签 LuCI 页面、5G 模组温度桥接，schema v3 配置自动迁移）；
+- `.github/workflows/WRT-CORE.yml`：新增「准备 H5000M 风扇插件 Rust 交叉编译
+  目标」步骤（`contains(env.WRT_CONFIG, 'H5000M')` 时执行）——3.x 插件的
+  `src/Makefile` 在包构建内直接调 `cargo build --target
+  aarch64-unknown-linux-musl`，静态 musl 目标自带链接器，无需构建 rust/host；
+  runner 的 rustup 安装持久化，后续「编译固件」步骤直接可用；
+- `README.md`：致谢区插件链接同步更新。
+
+### 说明
+
+- 六个 H5000M 配置（WIFI-YES / NETMONITOR / FM350 / NETWIZ-MT5700 /
+  NETWIZ-MT5700M / NETWIZ-FM350）均选中该插件，统一生效；
+- 非 H5000M 机型（AP3000M / X86 / FM350 变体）构建路径不受影响。
+
 ## [2026-10-19] 修复：局域网访问 Podman 映射端口不通（补 fw4 zone + 跨 zone 转发）
 
 ### 现象

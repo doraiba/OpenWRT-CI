@@ -230,7 +230,10 @@ OpenWRT-CI/
 │   ├── ApplyMTMode.sh        # MT 方案配置层组装与互斥注入
 │   ├── VerifyMTMode.sh       # 编译前 MT 驱动冲突语义校验
 │   ├── Handles.sh            # 静态资源预置与组件补丁
+│   ├── PatchRebase.py        # 上游源码漂移时自动重定基客制补丁上下文
+│   ├── ipv6/98-ipv6-prefix   # LAN 公网 IPv6 前缀下发修复（自用）
 │   ├── podman/98-podman-network  # Podman 容器网络首次开机初始化（自用）
+│   ├── podman/98-podman-storage  # Podman 存储根移出 tmpfs，重启不丢镜像（自用）
 │   └── Settings.sh           # 默认 IP / Wi-Fi 参数编译期写入
 └── README.md
 ```
@@ -241,4 +244,4 @@ OpenWRT-CI/
 
 * 🐧 **底包源码**：[immortalwrt/immortalwrt](https://github.com/immortalwrt/immortalwrt)（X86 主线）· [VIKINGYFY/immortalwrt](https://github.com/VIKINGYFY/immortalwrt)（H5000M / AP3000M 板级适配）
 * 👤 **编译框架**：[VIKINGYFY/OpenWRT-CI](https://github.com/VIKINGYFY/OpenWRT-CI)（云编译框架与插件优化）
-* 👤 **模组与插件**：[FAN789](https://github.com/FAN789) · [luci-app-mt5700m](https://github.com/LianXia233/luci-app-mt5700m) · [luci-app-fm350](https://github.com/LianXia233/luci-app-fm350) · [luci-app-netwiz](https://github.com/huchd0/luci-app-netwiz) · [luci-app-h5000m-fancontrol](https://github.com/FAN789/luci-app-h5000m-fancontrol) · [luci-app-h5000m-netmode](https://github.com/LianXia233/luci-app-h5000m-netmode)
+* 👤 **模组与插件**：[FAN789](https://github.com/FAN789) · [luci-app-mt5700m](https://github.com/LianXia233/luci-app-mt5700m) · [luci-app-fm350](https://github.com/LianXia233/luci-app-fm350) · [luci-app-netwiz](https://github.com/huchd0/luci-app-netwiz) · [luci-app-h5000m-fancontrol](https://github.com/LianXia233/luci-app-h5000m-fancontrol) · [luci-app-h5000m-netmode](https://github.com/LianXia233/luci-app-h5000m-netmode)
