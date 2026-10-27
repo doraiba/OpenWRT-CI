@@ -172,6 +172,7 @@ OpenWRT-CI/
 │   ├── *-MT-AUTO.yml         # MT 方案定时构建发版
 │   ├── FM350-AUTO.yml        # FM350 变体定时构建
 │   ├── NetWiz-AUTO.yml       # NetWiz 家族定时构建
+│   ├── H5000M-NETMONITOR-AUTO.yml # 自用配置定时构建（NetMonitor + Podman）
 │   ├── Auto-Clean.yml        # 历史制品轮换与清理
 │   └── Cache-Clean.yml       # Actions 缓存回收
 ├── Config/                   # 模块化 Kconfig 配置文件片段
@@ -180,13 +181,21 @@ OpenWRT-CI/
 │   ├── MT5700.txt / MT5700M.txt       # 模组管理方案 A/B 独立包定义
 │   ├── H5000M-WIFI-YES.txt / AP3000M.txt / X86.txt # 硬件机型基础母配置
 │   ├── *-FM350.txt           # 各机型 FM350 变体配置
-│   └── *-NETWIZ-*.txt        # NetWiz 组合变体配置
+│   ├── *-NETWIZ-*.txt        # NetWiz 组合变体配置
+│   ├── H5000M-EXTRA.txt      # H5000M 专属插件层（Bandix Plus / OpenAppFilter）
+│   └── H5000M-WIFI-YES-NETMONITOR.txt # 自用配置（netmonitor + podman）
 ├── AP3000M-EEPROM/           # AP3000M 射频恢复与校准脚本套件
 ├── Scripts/                  # 编译生命周期钩子脚本
 │   ├── Packages.sh           # 第三方源码 Feed 拉取与版本锁定
+│   ├── Packages-FM350.sh / Packages-NetWiz.sh / Packages-NetMonitor.sh
 │   ├── ApplyMTMode.sh        # MT 模组方案注入与配置组装
 │   ├── VerifyMTMode.sh       # 编译前驱动冲突语义安全拦截
 │   ├── Handles.sh            # 静态补丁应用与组件冲突修复
+│   ├── PatchRebase.py        # 客制补丁上下文随上游漂移自动重定基
+│   ├── ipv6/98-ipv6-prefix   # LAN 公网 IPv6 前缀下发修复（首次开机）
+│   ├── ipv6/ipv6-prefix-fix  # 同上，改为每次开机执行，兜住保留配置刷机
+│   ├── podman/98-podman-network # Podman 容器网络首次开机初始化
+│   ├── podman/98-podman-storage # Podman 存储根移出 tmpfs，重启不丢镜像
 │   └── Settings.sh           # 出厂默认 IP / Wi-Fi 编译期注入
 ├── docs/                     # GitHub Pages 静态落地页源码
 └── README.md                 # 固件说明文档
