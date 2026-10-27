@@ -1,5 +1,65 @@
 # 更新日志
 
+## [2026-10-27] 修复：保留配置刷机后 LAN 公网 IPv6 又消失（uci-defaults 被 overlay whiteout 遮挡）
+
+### 现象
+
+`98-ipv6-prefix` 的判定条件修好（`b5825a4`）并重新出固件后，刷机仍然没有公网
+IPv6：`br-lan` 只有 `fe80::`，`network.lan` 依旧是板级默认的
+`ip6assign='60'` + `ip6class='wan6' 'local'`。
+
+### 根因
+
+不是脚本逻辑问题，是 **uci-defaults 在「保留配置刷机」这条路径上根本不会被执行**：
+
+1. sysupgrade 勾选保留配置时 `/overlay` 整个保留（不是重新生成），上一版固件
+   里跑过并自删的 uci-defaults 在 overlay 上层留下 whiteout
+   （`c--------- 0,0` 的字符设备）；
+2. 新固件把修好的脚本放进 `/rom/etc/uci-defaults/`，但同名 whiteout 在合并
+   视图里把 `/rom` 的版本遮住，`/etc/uci-defaults` 里看不到它；
+3. `/etc/init.d/boot` 的实现只是 `ls /etc/uci-defaults` 后逐个 source，
+   看不见的条目自然不会执行 —— 脚本连「跑一次然后失败」的机会都没有。
+
+真机证据（刷入 `a61191d` 后）：同目录同前缀的三个脚本行为分叉 ——
+`98-podman-storage` 是本版才新增的（overlay 里没有历史 whiteout），它正常
+执行了（`graphroot` 已改到 `/overlay/containers/storage`、`sysupgrade.conf`
+已追加、`/overlay/containers` 已建）；而 `98-ipv6-prefix` / `98-podman-network`
+上一版就存在并自删过，本次完全没跑。差异只能用 whiteout 遮挡解释。
+
+### 修复
+
+新增 `Scripts/ipv6/ipv6-prefix-fix`（init 脚本，`START=19`），由 `Handles.sh`
+的 `*H5000M*` 段注入为：
+
+- `files/etc/init.d/ipv6-prefix-fix`
+- `files/etc/rc.d/S19ipv6-prefix-fix`（软链，随镜像一起落盘，不依赖 `enable`）
+
+脚本本体在 `/rom`、启动链在 `/rom`，都不经过 uci-defaults 的自删机制，
+**每次开机都重跑**，配置被谁改回去都能自愈。`S19` 早于 `network`（`S20`），
+改完配置再让 network 读取。
+
+判据比原来更保守：
+- `ip6assign` 只在「数字且小于 64」时收敛到 64，空值/非数字不动
+  （保留「LAN 不要 IPv6」这类显式配置）
+- `ip6class` 只在**不含** `MT5700Mv6` 时删除，已含正确类名的保持原样
+
+原 `98-ipv6-prefix` 保留，覆盖「全新刷机（不保留配置）」首次开机即修好的路径。
+
+### 真机验证
+
+把 `ip6assign` 改回 `60`、`ip6class` 加回 `wan6 local` 后重启：
+
+```
+重启后 network.lan.ip6assign='64'      ← 启动链自动纠正
+       ip6class                    ← 已删除
+br-lan 2408:8445:590:b91::1/64 scope global
+ra_lifetime 告警：本次开机 1 次（前缀下发前的瞬时），修复前为 16 次
+路由器 ping6 2400:3200::1 → 27ms
+```
+
+另测两条分支：`ip6class` 含 `MT5700Mv6` 时保留不删、只修 `ip6assign`；
+重复执行无任何输出（幂等）。
+
 ## [2026-10-27] 修复 firewall4 客制补丁失配导致的编译中断（新增补丁上下文自动重定基）
 
 ### 背景

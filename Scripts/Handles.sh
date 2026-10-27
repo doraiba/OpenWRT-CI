@@ -382,8 +382,11 @@ esac
 # 而实际拨号接口是 MT5700M / MT5700Mv6，上游只委派一条 /64。类名对不上 +
 # 长度不够，前缀永远分配不到 br-lan，odhcpd 继而打印
 # 「No default route present, setting ra_lifetime to 0!」，表现为 LAN 只有
-# 链路本地地址、没有公网 IPv6。修复脚本由 files/etc/uci-defaults/98-ipv6-prefix
-# 在首次开机改好（内部先判断 MT5700M 是否存在，FM350 等变体自动跳过）。
+# 链路本地地址、没有公网 IPv6。修复分两路注入：
+#   1. files/etc/uci-defaults/98-ipv6-prefix —— 全新刷机（不保留配置）时首次开机即修好；
+#   2. files/etc/init.d/ipv6-prefix-fix + rc.d/S19 —— 每次开机都跑，兜住
+#      「保留配置刷机 → overlay whiteout 遮住新 uci-defaults → 永不执行」这条。
+# 两路判据一致，均内置幂等判断，非 MT5700 变体（FM350 等）自动跳过。
 case "$WRT_CONFIG" in
 *H5000M*)
 	IPV6_UD_SRC="$GITHUB_WORKSPACE/Scripts/ipv6/98-ipv6-prefix"
@@ -396,6 +399,27 @@ case "$WRT_CONFIG" in
 		echo "IPv6 prefix uci-defaults injected!"
 	else
 		echo "WARNING: $IPV6_UD_SRC not found; LAN 侧公网 IPv6 需手工修正 ip6class/ip6assign" >&2
+	fi
+
+	# 上面那个 uci-defaults 只在「首次开机」生效，保留配置刷机时会被 overlay
+	# whiteout 遮住（上一版固件跑过并自删 → upper 层留下同名 whiteout →
+	# /etc/uci-defaults 合并视图里看不到 /rom 的新版本 → 永不执行）。
+	# 真机实证见 Scripts/ipv6/ipv6-prefix-fix 的文件头注释。
+	#
+	# 因此真正的保障是 init 脚本：本体在 /rom/etc/init.d、启动链在 /rom/etc/rc.d，
+	# 不经过 uci-defaults 的自删机制，每次开机都重跑，配置被改回去也能自愈。
+	# S19 早于 network（S20），改完配置再让 network 读。
+	IPV6_INIT_SRC="$GITHUB_WORKSPACE/Scripts/ipv6/ipv6-prefix-fix"
+
+	if [ -f "$IPV6_INIT_SRC" ]; then
+		mkdir -p "$WRT_FILES/etc/init.d" "$WRT_FILES/etc/rc.d"
+		cp -f "$IPV6_INIT_SRC" "$WRT_FILES/etc/init.d/ipv6-prefix-fix"
+		chmod +x "$WRT_FILES/etc/init.d/ipv6-prefix-fix"
+		ln -sf ../init.d/ipv6-prefix-fix "$WRT_FILES/etc/rc.d/S19ipv6-prefix-fix"
+		echo "IPv6 prefix init script injected (S19, every boot)!"
+	else
+		echo "ERROR: $IPV6_INIT_SRC not found; 保留配置刷机后 LAN 公网 IPv6 会再次消失!" >&2
+		exit 1
 	fi
 	;;
 esac

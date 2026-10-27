@@ -231,7 +231,8 @@ OpenWRT-CI/
 │   ├── VerifyMTMode.sh       # 编译前 MT 驱动冲突语义校验
 │   ├── Handles.sh            # 静态资源预置与组件补丁
 │   ├── PatchRebase.py        # 上游源码漂移时自动重定基客制补丁上下文
-│   ├── ipv6/98-ipv6-prefix   # LAN 公网 IPv6 前缀下发修复（自用）
+│   ├── ipv6/98-ipv6-prefix   # LAN 公网 IPv6 前缀下发修复（首次开机，自用）
+│   ├── ipv6/ipv6-prefix-fix  # 同上，改为每次开机执行（S19），兜住保留配置刷机
 │   ├── podman/98-podman-network  # Podman 容器网络首次开机初始化（自用）
 │   ├── podman/98-podman-storage  # Podman 存储根移出 tmpfs，重启不丢镜像（自用）
 │   └── Settings.sh           # 默认 IP / Wi-Fi 参数编译期写入

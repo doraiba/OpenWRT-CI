@@ -1,0 +1,97 @@
+#!/bin/sh /etc/rc.common
+# LAN 侧公网 IPv6 前缀下发修复 —— 每次开机执行（幂等），排在 network 之前。
+#
+# ============================ 为什么不是 uci-defaults ============================
+# 本文件的前身是 files/etc/uci-defaults/98-ipv6-prefix。uci-defaults 只在
+# 「首次开机」跑一次，看似够用，实际在「保留配置刷机」这条最常见路径上会静默失效：
+#
+#   1. sysupgrade 勾选保留配置时，/overlay 整个保留（不是重新生成），
+#      上一版固件里已经跑过并自删的 uci-defaults 会在 overlay 上层留下
+#      whiteout（`c--------- 0,0` 的字符设备）；
+#   2. 新固件虽然把修好的脚本放进了 /rom/etc/uci-defaults/，但同名 whiteout
+#      在合并视图里把 /rom 的版本遮住，/etc/uci-defaults 里根本看不到它；
+#   3. /etc/init.d/boot 的实现只是 `ls /etc/uci-defaults` 后逐个 source，
+#      看不见的条目自然不会执行 —— 脚本连「跑一次然后失败」的机会都没有。
+#
+# 真机证据（2026-10-27，刷入 a61191d 后开公网 IPv6 又消失）：
+#   - 98-podman-storage 是本版固件才新增的脚本，overlay 里没有历史 whiteout，
+#     它正常执行了：graphroot 已改到 /overlay/containers/storage、
+#     sysupgrade.conf 已追加 /overlay/containers、/overlay/containers 已建；
+#   - 98-ipv6-prefix / 98-podman-network 上一版固件就已存在并自删过，
+#     overlay 里早有 whiteout，本次开机完全没执行 —— network.lan 仍是
+#     板级默认的 ip6assign='60' + ip6class='wan6' 'local'。
+#   两者同目录同前缀，行为差异只能用 whiteout 遮挡解释。
+#
+# 结论：凡是「每次升级后都必须重新成立」的修正，不能依赖 uci-defaults。
+# 改成 init 脚本后，脚本本体在 /rom/etc/init.d、启动链在 /rom/etc/rc.d，
+# 都不经过 uci-defaults 的自删机制，每次开机都会重跑，配置被谁改回去都能自愈。
+# ==============================================================================
+#
+# 修正内容（与 98-ipv6-prefix 判据一致）：
+#   板级默认 /etc/config/network 的 lan 段按「有线 WAN + wan6」写，
+#   ip6class 只认 wan6，而实际承载前缀的是 MT5700Mv6；同时 ip6assign 要 60 位
+#   而上游只委派一条 /64。两道门同时卡住 → 前缀永远分配不到 br-lan →
+#   odhcpd 打印「No default route present, setting ra_lifetime to 0!」→
+#   终端拿不到可用的公网地址与默认网关。
+#
+# START=19：network 是 S20，本脚本必须排在它之前，改完配置再让 network 读。
+
+START=19
+STOP=95
+USE_PROCD=0
+
+LAN_IF=lan
+UPSTREAM_V6_IF=MT5700Mv6
+
+ipv6_prefix_fix() {
+	# 只处理 MT5700 方案。FM350 / NetWiz 等变体既没有 at-webserver 也没有
+	# network.MT5700M，直接放过，不碰它们的任何配置。
+	[ -x /etc/init.d/at-webserver ] || uci -q get network.MT5700M >/dev/null 2>&1 || return 0
+
+	local changed=0
+	local cur classes
+
+	# 上游只委派 /64：ip6assign 小于 64 时永远分配不出来，收敛到 64。
+	# 未设置或非数字时不动 —— 那是「LAN 不要 IPv6」之类的显式选择。
+	cur="$(uci -q get network.$LAN_IF.ip6assign)"
+	case "$cur" in
+	''|*[!0-9]*)
+		;;
+	*)
+		if [ "$cur" -lt 64 ]; then
+			uci set network.$LAN_IF.ip6assign='64'
+			changed=1
+			echo "ipv6: $LAN_IF.ip6assign $cur -> 64（上游仅委派 /64）"
+		fi
+		;;
+	esac
+
+	# ip6class 白名单里没有实际承载前缀的接口时，前缀会被过滤掉。
+	# 已经包含 MT5700Mv6 的保持原样，不做多余改动。
+	if classes="$(uci -q get network.$LAN_IF.ip6class)"; then
+		case " $classes " in
+		*" $UPSTREAM_V6_IF "*)
+			;;
+		*)
+			uci -q delete network.$LAN_IF.ip6class
+			changed=1
+			echo "ipv6: 已移除 $LAN_IF.ip6class（原值 [$classes]，不含 $UPSTREAM_V6_IF）"
+			;;
+		esac
+	fi
+
+	if [ "$changed" = "1" ]; then
+		uci commit network
+		echo "ipv6: network 配置已提交，network 服务随后启动时生效"
+	fi
+
+	return 0
+}
+
+boot() {
+	ipv6_prefix_fix
+}
+
+start() {
+	ipv6_prefix_fix
+}
