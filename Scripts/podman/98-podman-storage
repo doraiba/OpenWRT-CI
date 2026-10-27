@@ -1,0 +1,131 @@
+#!/bin/sh
+# SPDX-License-Identifier: MIT
+#
+# Podman 存储根首次启动初始化（仅注入到 H5000M 自用配置的固件）
+#
+# 由 Scripts/Handles.sh 复制到 files/etc/uci-defaults/98-podman-storage，
+# 首次开机执行一次，退出码为 0 时脚本自身被删除。
+#
+# 问题：镜像 / 容器 / 卷全部存在内存里，重启即消失。
+#
+#   podman 默认 graphroot = /var/lib/containers/storage
+#           ↓
+#   OpenWrt 的 /var 是指向 /tmp 的软链接
+#           ↓
+#   /tmp 是 tmpfs（内存盘），容量约 1G
+#           ↓
+#   重启后镜像、容器定义、命名卷全部清空
+#
+# 上游 immortalwrt/packages/utils/podman/Makefile 直接把 podman 源码里的官方
+# storage.conf 装成 /etc/containers/storage.conf，只做了一处替换：
+#   $(SED) 's/driver = ""/driver = "overlay"/g' $(1)/etc/containers/storage.conf
+# graphroot 原封不动保留为面向普通发行版的默认值。普通发行版 /var 是磁盘目录，
+# 所以上游没觉得有问题；files/podman.init 与 files/podman.defaults 也都不碰
+# 存储路径。故需在此修正。
+#
+# 目标分区选择：
+#   /overlay 是本机的独立持久分区（f2fs on /dev/loop0），**不是** overlayfs
+#   合并层，因此原生 overlay 驱动可以直接使用，无需 mount_program =
+#   fuse-overlayfs。若把 graphroot 放在 /opt 这类合并根目录下，会变成
+#   overlay-on-overlay，内核不支持，只能退回 fuse-overlayfs（有性能损失）。
+#
+# 若设备上挂载了 USB 硬盘，可写一行路径到 /etc/podman-storage-root 覆盖默认值，
+# 例如 /mnt/sda1 —— 这样容器数据不占 eMMC。
+#
+# 关于升级保留：/overlay 下的数据重启后仍在，但 sysupgrade 刷机会清掉除
+# /etc、/usr 等白名单外的内容。本脚本会把 <BASE>/containers 追加进
+# /etc/sysupgrade.conf，使固件升级时也保留（首次升级后才生效）。
+#
+# 不做数据迁移：本脚本面向首次开机，此时 tmpfs 是空的没有可迁移的东西；
+# 若在已运行的系统上手工执行，请自行重新拉取镜像（原数据在内存里，本就不可靠）。
+
+[ -x /usr/bin/podman ] || exit 0
+
+CONF=/etc/containers/storage.conf
+[ -f "$CONF" ] || exit 0
+
+# 本机没有 stat 命令，文件系统类型只能从 /proc/mounts 解析
+fstype_of() {
+	awk -v p="$1" '$2 == p { print $3; exit }' /proc/mounts 2>/dev/null
+}
+
+# 默认目标基目录；可被 /etc/podman-storage-root 覆盖
+BASE=
+[ -s /etc/podman-storage-root ] && BASE=$(head -n 1 /etc/podman-storage-root)
+[ -n "$BASE" ] || BASE=/overlay
+
+# 只接受真实块设备上的可写目录：排除 tmpfs / ramfs 与 overlayfs 合并层。
+# 找不到就放弃（保持原状总好过把数据写到另一个易失位置）。
+pick_base() {
+	for cand in "$BASE" /mnt/data /data; do
+		[ -d "$cand" ] || continue
+		case "$(fstype_of "$cand")" in
+		''|tmpfs|ramfs|overlay|overlayfs) continue ;;
+		esac
+		[ -w "$cand" ] || continue
+		echo "$cand"
+		return 0
+	done
+	return 1
+}
+
+# 读取当前 graphroot（可能是 graphroot = "/path" 或 graphroot = /path）
+current_graphroot() {
+	sed -n 's/^[[:space:]]*graphroot[[:space:]]*=[[:space:]]*"\{0,1\}\([^"]*[^"[:space:]]\)"\{0,1\}[[:space:]]*$/\1/p' \
+		"$CONF" 2>/dev/null | head -n 1
+}
+
+CUR=$(current_graphroot)
+
+# 已经是持久路径就别动 —— 尊重手工调整（例如指到 USB 硬盘）
+case "$CUR" in
+/var/*|/tmp/*) : ;;
+'') : ;;
+*)
+	echo "podman-storage: graphroot 已是持久路径 $CUR，保持不变"
+	exit 0
+	;;
+esac
+
+if ! BASE=$(pick_base); then
+	echo "podman-storage: 未找到可用的持久分区（tmpfs/overlayfs 均不可用），保持原配置"
+	echo "podman-storage: 可写一行路径到 /etc/podman-storage-root 手工指定，例如 /mnt/sda1"
+	exit 0
+fi
+
+GRAPHROOT="$BASE/containers/storage"
+
+mkdir -p "$GRAPHROOT" 2>/dev/null || {
+	echo "podman-storage: 无法创建 $GRAPHROOT，保持原配置"
+	exit 0
+}
+
+# 改 [storage] 段里的 graphroot；缺这一行则插到 [storage] 头部之后。
+# 用 awk 而非 sed -a，避免 busybox sed 对 a 命令的支持差异。
+if grep -qE '^[[:space:]]*graphroot[[:space:]]*=' "$CONF"; then
+	awk -v g="$GRAPHROOT" '
+		/^[[:space:]]*graphroot[[:space:]]*=/ { print "graphroot = \"" g "\""; next }
+		{ print }
+	' "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"
+else
+	awk -v g="$GRAPHROOT" '
+		{ print }
+		/^\[storage\][[:space:]]*$/ && !done { print "graphroot = \"" g "\""; done = 1 }
+	' "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"
+fi
+
+echo "podman-storage: graphroot ${CUR:-<未设置>} -> $GRAPHROOT"
+
+# 容器数据在固件升级（sysupgrade）时保留
+if ! grep -qxF "$BASE/containers" /etc/sysupgrade.conf 2>/dev/null; then
+	printf '%s\n' "$BASE/containers" >> /etc/sysupgrade.conf
+	echo "podman-storage: 已把 $BASE/containers 加入 /etc/sysupgrade.conf"
+fi
+
+# 首次开机时 podman 尚未启动，无需重启；仅在服务已在跑时重载配置。
+# 已存在的容器不会丢：只换存储根，旧数据若在 tmpfs 本就会随重启消失。
+if pgrep -f '/usr/bin/podman' >/dev/null 2>&1; then
+	/etc/init.d/podman restart >/dev/null 2>&1 && echo "podman-storage: podman 已重启以应用新存储根"
+fi
+
+exit 0

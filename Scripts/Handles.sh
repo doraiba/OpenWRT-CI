@@ -360,6 +360,19 @@ case "$WRT_CONFIG" in
 		echo "ERROR: $PODMAN_UD_SRC not found; podman 容器网络将无法初始化（netavark 缺 iptables）!" >&2
 		exit 1
 	fi
+
+	# 存储根修复：上游 podman 的 graphroot 落在 /var/lib/containers/storage，
+	# 而 /var -> /tmp（tmpfs），导致镜像/容器/卷重启即清空。改到 /overlay。
+	PODMAN_ST_UD_SRC="$GITHUB_WORKSPACE/Scripts/podman/98-podman-storage"
+
+	if [ -f "$PODMAN_ST_UD_SRC" ]; then
+		mkdir -p "$WRT_FILES/etc/uci-defaults/"
+		cp -f "$PODMAN_ST_UD_SRC" "$WRT_FILES/etc/uci-defaults/98-podman-storage"
+		chmod +x "$WRT_FILES/etc/uci-defaults/98-podman-storage"
+		echo "Podman storage uci-defaults injected!"
+	else
+		echo "WARNING: $PODMAN_ST_UD_SRC not found; podman 镜像将存放在 tmpfs，重启丢失" >&2
+	fi
 	;;
 esac
 
