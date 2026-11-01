@@ -89,7 +89,11 @@ env:
 jobs:
   core:
     name: 编译核心 · ${{inputs.WRT_SOURCE}}
-    runs-on: ubuntu-latest
+    # 钉版本，不用 ubuntu-latest：2026-11-01 起 latest 已指向 ubuntu-26.04，
+    # 而 immortalwrt 的 init_build_environment.sh 只认 bionic/focal/jammy/
+    # noble/trixie 等代号，26.04 会以「Unsupported OS, use Ubuntu 20.04
+    # instead.」退出，导致「初始化编译环境」整步失败。
+    runs-on: ubuntu-22.04
     # 略低于平台 6h 硬上限：被硬上限杀掉时 runner 直接终止，
     # 缓存的 post 保存步骤会被整段跳过，下次必然冷编译。
     timeout-minutes: 345
