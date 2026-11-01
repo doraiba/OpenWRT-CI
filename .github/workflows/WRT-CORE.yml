@@ -93,7 +93,13 @@ jobs:
     # 而 immortalwrt 的 init_build_environment.sh 只认 bionic/focal/jammy/
     # noble/trixie 等代号，26.04 会以「Unsupported OS, use Ubuntu 20.04
     # instead.」退出，导致「初始化编译环境」整步失败。
-    runs-on: ubuntu-22.04
+    #
+    # 选 noble(24.04) 而非 jammy(22.04)：工具链缓存（wrt-tc-*）里的 host 工具
+    # 是 10-27 那次在 ubuntu-24.04 上编出来的，按 glibc 2.38+ 链接。缓存键
+    # 只含源码/feed 哈希、不含镜像版本，换到 22.04（glibc 2.35）后会命中这份
+    # 缓存并报 `find: version 'GLIBC_2.38' not found`，包信息扫描因此失败，
+    # make defconfig 把 luci-app-mt5700 等自定义符号当孤立符号丢弃。
+    runs-on: ubuntu-24.04
     # 略低于平台 6h 硬上限：被硬上限杀掉时 runner 直接终止，
     # 缓存的 post 保存步骤会被整段跳过，下次必然冷编译。
     timeout-minutes: 345
