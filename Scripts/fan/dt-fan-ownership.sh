@@ -2,13 +2,15 @@
 # H5000M：让 luci-app-h5000m-fancontrol 独占风扇 PWM（设备树侧）
 #
 # ============================ 为什么要动设备树 ============================
-# stock H5000M 的 cpu-thermal 里有三条冷却映射直接指向同一路 pwm-fan：
+# 节点本体在 target/linux/mediatek/dts/mt7987.dtsi（`fan: pwm-fan`，
+# cooling-levels = <0 128 192 255>），板级 dts 只用 `&fan { status = "okay" }`
+# 打开它，冷却映射同样继承自 dtsi：
 #
-#   cpu-passive      cooling-device = <&pwm_fan 1 1>   /* active-low 40 ℃ */
-#   cpu-active-low   cooling-device = <&pwm_fan 2 2>
-#   cpu-active-high  cooling-device = <&pwm_fan 3 3>
+#   cpu-passive      <&fan 1 1> → trip active-low   40 ℃  → level[1] = 128 (50%)
+#   cpu-active-low   <&fan 2 2> → trip active-med   85 ℃  → level[2] = 192 (75%)
+#   cpu-active-high  <&fan 3 3> → trip active-high 115 ℃  → level[3] = 255 (100%)
 #
-# 板级 cooling-levels = <0 128 192 255>，即 state 1 = 128/255 = 50%。
+# 也就是说 state 1 恰好是 128/255 = 50%。
 # 于是内核 governor 与用户态控制器抢同一路输出，控制器只能把目标抬到映射
 # 要求的档位：CPU 一过 40 ℃，下限就是 50%，静音曲线里的 0~40% 永远落不了地。
 #
@@ -21,11 +23,16 @@
 # 退回来的结果同样落在 state 1 → 50%，说明真正的约束来自 cooling-map 本身，
 # 而不是阈值或节点名。
 #
-# 删掉这三条映射后 owner 变成 exclusive：
-#   · 83 ℃ 以下不再有下限，静音曲线的 0~40% 真正生效；
-#   · 83 ℃ 强制 cooling-levels[2] = 192（75%），113 ℃ 满速兜底；
-#   · hot / critical trip 与 cpufreq 冷却设备原样保留，CPU 降频保护不动
-#     （cpu-active-hot 映射的是其它冷却设备，不指向风扇，故不动它）。
+# 删掉这三条映射后 owner 变成 exclusive（控制器独占，和上游 patch 一致）：
+#   · 内核不再要求任何档位，85 ℃ 以下完全没有下限，静音曲线的 0~40% 真正生效；
+#   · 高温兜底改由控制器自己扛：≥83 ℃ 顶到 cooling-levels[2] = 192（75%），
+#     ≥113 ℃ 顶到 255（100%）；读不到 CPU 温度时直接 255。这两个常数比内核
+#     trip（85/115 ℃）略保守，是控制器 3.x 自带的 EMERGENCY_STATE_2/3_C；
+#   · hot(120 ℃) / critical(125 ℃) trip 与 cpu-active-hot（cpufreq 降频）原样
+#     保留，CPU 降频与过热保护不受影响。
+#
+# 映射定义在 dtsi 里被所有 MT7987 板子共享，因此 /delete-node/ 只追加到
+# 板级 h5000m dts，其它机型不受影响。
 #
 # 与上游 luci-app-h5000m-fancontrol 自带的
 # openwrt-patches/h5000m-userspace-fan-control.patch 语义一致；之所以在这里
