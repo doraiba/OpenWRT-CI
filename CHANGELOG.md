@@ -19,9 +19,9 @@ basis="conservative fallback thresholds (38/83/113 C) selected state 1"
 
 不是曲线写错，是设备树把风扇的一半所有权留给了内核 governor：
 
-1. stock `mt7987a-hiveton-h5000m.dts` 的 `cpu-thermal/cooling-maps` 里有
-   `cpu-passive` / `cpu-active-low` / `cpu-active-high` 三条映射直接指向
-   `<&pwm_fan>`；
+1. stock `mt7987.dtsi`（H5000M 的板级 dts 直接 include 它）的
+   `cpu-thermal/cooling-maps` 里有 `cpu-passive` / `cpu-active-low` /
+   `cpu-active-high` 三条映射直接指向 `<&fan>`；
 2. `pwm-fan/cooling-levels = <0 128 192 255>`，**state 1 就是 128/255 = 50%**；
 3. CPU 42 ℃ 已越过 `active-low`（40 ℃）→ state 1 → 内核要求至少 50%；
 4. 控制器读 trip 用 `trip-point*` 前缀，而 stock 命名是
@@ -32,28 +32,27 @@ basis="conservative fallback thresholds (38/83/113 C) selected state 1"
 
 ### 修复
 
-构建前给 H5000M 的 dts 追加（`Scripts/fan/dt-fan-ownership.sh`，幂等）：
+只改一档：构建前给 H5000M 的**板级** dts 追加（`Scripts/fan/dt-fan-levels.sh`，幂等）：
 
 ```dts
-&{/thermal-zones/cpu-thermal/cooling-maps} {
-	/delete-node/ cpu-active-high;
-	/delete-node/ cpu-active-low;
-	/delete-node/ cpu-passive;
+&fan {
+	cooling-levels = <0 96 192 255>;
 };
 ```
 
-风扇 PWM 从此由控制器独占（`owner=exclusive`）：
+第一档 128（50%）→ 96（96/255 ≈ 38%），其余三档与所有 trip 都不动：
 
-- 83 ℃ 以下不设下限，静音曲线的 0~40% 真正生效；
-- 83 ℃ 强制 `cooling-levels[2]=192`（75%），113 ℃ 255 满速兜底；
-- `cpu-active-hot` 映射的是 cpufreq 等其它冷却设备（不指向风扇），原样保留，
-  hot/critical trip 与 CPU 降频保护不受影响。
+- 40~85 ℃ 的内核下限变成 38%，静音曲线写 40% 时算出来 102 > 96，不再被夹；
+- 85 ℃ 的 192（75%）、115 ℃ 的 255（100%）两级兜底，以及 hot(120) /
+  critical(125) 与 `cpu-active-hot` 的 CPU 降频保护，全部保持原厂行为；
+- 相比「删掉三条 cooling-map 让控制器独占」（floor 直接到 0），这个改法只覆盖
+  一个属性，内核仍是这路风扇的所有者之一，语义最接近原厂，风险也最小。
 
-上游 `luci-app-h5000m-fancontrol` 自带语义相同的
-`openwrt-patches/h5000m-userspace-fan-control.patch`，但 CI 从未应用它。
-这里不 `patch -p1` 而是追加式写入：补丁依赖 dts 上下文行，上游一改 dts 就
-`Hunk #1 FAILED` 中断整包编译；追加只依赖节点路径，且带幂等标记。
-新增 workflow 断言，补丁丢失时在下载阶段直接报错，不再「编译全绿、设备上很吵」。
+`cooling-levels` 本体在 `mt7987.dtsi`，被所有 MT7987 板子共享，覆盖写在本机型的
+板级 dts 里，其它机型不受影响。这里不 `patch -p1` 而是追加式写入：补丁依赖 dts
+上下文行，上游一改 dts 就 `Hunk #1 FAILED` 中断整包编译；追加只依赖节点与属性名，
+且带幂等标记。workflow 增加断言（标记 + `<0 96 192 255>` 双重匹配），补丁丢失时
+在下载阶段直接报错，不再「编译全绿、设备上很吵」。
 
 ## [2026-10-31] 默认主题 vantage 补齐：Aurora 保留可选 + 修复默认样式不生效
 
