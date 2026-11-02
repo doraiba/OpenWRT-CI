@@ -312,6 +312,25 @@ jobs:
           $GITHUB_WORKSPACE/Scripts/Packages.sh
           $GITHUB_WORKSPACE/Scripts/Handles.sh
 
+      # 风扇「内核安全下限」完全由设备树决定：只要 cpu-thermal 里还有指向
+      # pwm-fan 的 cooling-map，内核就会把输出顶到 cooling-levels[1]=128，
+      # 即 50%，静音曲线的 0~40% 永远落不了地。补丁丢了照样编译全绿，
+      # 只在设备上表现为「静音模式还是 50%、很吵」，与 podman 那条同属
+      # 最难查的一类，因此在下载与编译之前硬断言。
+      - name: 校验 H5000M 风扇独占设备树补丁
+        if: contains(env.WRT_CONFIG, 'H5000M') && env.WRT_TEST != 'true'
+        run: |
+          DTS="$(ls ./wrt/target/linux/mediatek/dts/*h5000m*.dts 2>/dev/null | head -1)"
+          if [ -z "$DTS" ]; then
+            echo "::error::未找到 H5000M dts，风扇冷却映射补丁无处可打"
+            exit 1
+          fi
+          if ! grep -q 'h5fan-userspace-ownership' "$DTS"; then
+            echo "::error::$DTS 缺少 h5fan-userspace-ownership：静音模式仍会被内核下限抬到 50%"
+            exit 1
+          fi
+          echo "风扇独占冷却映射已写入 $(basename "$DTS")"
+
       # FM350 变体专属：拉取 luci-app-fm350 源码 + 准备 Rust 交叉编译目标。
       # 条件为 contains FM350，H5000M / AP3000M / X86 三套既有构建不执行本步骤。
       #

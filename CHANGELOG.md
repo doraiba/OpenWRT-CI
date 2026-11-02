@@ -1,4 +1,60 @@
 # 更新日志
+## [2026-11-02] 修复：静音模式风扇仍输出 50%（内核 cooling-map 下限顶住曲线）
+
+### 现象
+
+静音曲线已经改成 `20:0,35:0,40:40,55:42,70:60,85:75,95:100`，CPU 42 ℃ 时风扇
+仍然稳定在 50%，噪音明显。`h5000m-fancontrol status json` 直接给出矛盾点：
+
+```
+requested_pwm=102 (40%)  target_pwm=128 (50%)  reason=auto+kernel-floor
+floor_pwm=128  owner=shared  kernel_floor_applied=true
+basis="conservative fallback thresholds (38/83/113 C) selected state 1"
+```
+
+曲线算出来是 40%，被内核安全下限抬到 50% —— 所以调曲线、改手动模式都没用
+（手动模式同样过 `apply_floor`）。
+
+### 根因
+
+不是曲线写错，是设备树把风扇的一半所有权留给了内核 governor：
+
+1. stock `mt7987a-hiveton-h5000m.dts` 的 `cpu-thermal/cooling-maps` 里有
+   `cpu-passive` / `cpu-active-low` / `cpu-active-high` 三条映射直接指向
+   `<&pwm_fan>`；
+2. `pwm-fan/cooling-levels = <0 128 192 255>`，**state 1 就是 128/255 = 50%**；
+3. CPU 42 ℃ 已越过 `active-low`（40 ℃）→ state 1 → 内核要求至少 50%；
+4. 控制器读 trip 用 `trip-point*` 前缀，而 stock 命名是
+   `active-high/active-med/active-low/hot/crit`，phandle 匹配一律落空，
+   于是退回 38/83/113 保守阈值 —— 结果同样落在 state 1。
+
+即：**下限不是 UCI 选项，改不了；它来自 cooling-map 与 cooling-levels 的乘积**。
+
+### 修复
+
+构建前给 H5000M 的 dts 追加（`Scripts/fan/dt-fan-ownership.sh`，幂等）：
+
+```dts
+&{/thermal-zones/cpu-thermal/cooling-maps} {
+	/delete-node/ cpu-active-high;
+	/delete-node/ cpu-active-low;
+	/delete-node/ cpu-passive;
+};
+```
+
+风扇 PWM 从此由控制器独占（`owner=exclusive`）：
+
+- 83 ℃ 以下不设下限，静音曲线的 0~40% 真正生效；
+- 83 ℃ 强制 `cooling-levels[2]=192`（75%），113 ℃ 255 满速兜底；
+- `cpu-active-hot` 映射的是 cpufreq 等其它冷却设备（不指向风扇），原样保留，
+  hot/critical trip 与 CPU 降频保护不受影响。
+
+上游 `luci-app-h5000m-fancontrol` 自带语义相同的
+`openwrt-patches/h5000m-userspace-fan-control.patch`，但 CI 从未应用它。
+这里不 `patch -p1` 而是追加式写入：补丁依赖 dts 上下文行，上游一改 dts 就
+`Hunk #1 FAILED` 中断整包编译；追加只依赖节点路径，且带幂等标记。
+新增 workflow 断言，补丁丢失时在下载阶段直接报错，不再「编译全绿、设备上很吵」。
+
 ## [2026-10-31] 默认主题 vantage 补齐：Aurora 保留可选 + 修复默认样式不生效
 
 ### 背景

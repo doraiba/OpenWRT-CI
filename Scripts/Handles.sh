@@ -469,6 +469,19 @@ case "$WRT_CONFIG" in
 		echo "ERROR: $IPV6_INIT_SRC not found; 保留配置刷机后 LAN 公网 IPv6 会再次消失!" >&2
 		exit 1
 	fi
+
+	# 风扇内核下限：stock DT 把 pwm-fan 挂在 cpu-thermal 的三条 cooling-map 上，
+	# state 1 对应 cooling-levels[1]=128，即内核强制 50% 下限，静音曲线的
+	# 0~40% 永远落不了地（实测 requested 40% → target 50%，reason
+	# auto+kernel-floor）。摘掉这三条映射后风扇由控制器独占，83 ℃ 以下不设
+	# 下限，83 ℃ / 113 ℃ 仍按 192 / 255 兜底。详见脚本头注释。
+	FAN_DT_SRC="$GITHUB_WORKSPACE/Scripts/fan/dt-fan-ownership.sh"
+
+	if [ -f "$FAN_DT_SRC" ]; then
+		bash "$FAN_DT_SRC" "$(cd "$PKG_PATH/.." && pwd)" || exit 1
+	else
+		echo "WARNING: $FAN_DT_SRC not found; 静音模式风扇仍会被内核下限抬到 50%" >&2
+	fi
 	;;
 esac
 
