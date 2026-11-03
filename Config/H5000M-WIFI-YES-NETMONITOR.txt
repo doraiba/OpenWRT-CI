@@ -69,6 +69,33 @@ CONFIG_PACKAGE_ucode-mod-uloop=y
 # 静默缺包导致 TLS 校验失败。
 CONFIG_PACKAGE_ca-bundle=y
 
+# ===== luci-app-taygedo：塔吉多自动签到（自用）=====
+#
+# 包来源：https://github.com/LianXia233/taygedo-CI（分支 main）。
+# 构成：LuCI JS 前端（服务 → 塔吉多签到）+ Rust 后端 /usr/bin/taygedo-rs。
+#
+# 后端**从源码交叉编译**（不经 OpenWrt 的 lang/rust feed，避免连 rustc 一起
+# 编 1.5~3 小时）：
+#   1. defconfig 之前，Scripts/Packages-Taygedo.sh 把包与 Rust 工程放进
+#      package/luci-app-taygedo/（Rust 工程在 rust/）；
+#   2. defconfig 之后，Scripts/Build-Taygedo.sh 用宿主机 rustup +
+#      OpenWrt staging_dir 的 aarch64-openwrt-linux-musl-gcc 编译
+#      `--no-default-features --features openwrt`，产物落到包目录 local/。
+#
+# 导入由配置文件驱动（本文件写了下面这行就会导入，与机型名无关）。
+# 包 Makefile 见到 local/taygedo-rs 即跳过 GitHub Release 下载；只有源码
+# 编译不可用时才回退预编译资产（TAYGEDO_PREBUILT=1）。
+#
+# DEPENDS: +ca-bundle +luci-base +curl（luci-base 已在 GENERAL.txt 选中；
+# ca-bundle 在 GENERAL.txt 中被注释，故此处显式选中）。
+#
+# 本仓库**故意不开启**（保留整段说明供以后要用时打开）：
+# taygedo-rs 常驻监听 0.0.0.0:8787，与 H5000M-EXTRA.txt 里的
+# luci-app-bandix-plus 默认 API 端口冲突，会让 bandix-plus 开机 bind 失败、
+# 进入 procd crash loop（LuCI 显示 "bandix-plus is not running"）。
+# 要启用必须先给 taygedo 换监听端口，再取消下面这行的注释。
+#CONFIG_PACKAGE_luci-app-taygedo=y
+
 # ===== Podman 容器管理（自用）=====
 #
 # 前端：https://github.com/Zerogiven-OpenWRT-Packages/luci-app-podman（v2.3.4，LuCI JS）

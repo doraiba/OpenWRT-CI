@@ -152,6 +152,18 @@ jobs:
           echo "WRT_WIFI=wifi-yes" >> $GITHUB_ENV
           echo "WRT_KVER=none" >> $GITHUB_ENV
           echo "WRT_LIST=none" >> $GITHUB_ENV
+          # luci-app-taygedo 导入开关：完全由配置文件自己声明驱动。
+          # 早期这个包只服务 H5000M 自用变体，取包逻辑写死在
+          # Packages-NetMonitor.sh 里、由 contains(WRT_CONFIG,'NETMONITOR')
+          # 触发，其他机型想用就必须再改一遍 YAML。现在改为：任何
+          # Config/*.txt 只要写了 CONFIG_PACKAGE_luci-app-taygedo=y 就自动
+          # 导入，默认所有既有配置都不含该行，故对现网产物零影响。
+          if grep -qE '^[[:space:]]*CONFIG_PACKAGE_luci-app-taygedo=y[[:space:]]*$' \
+              "./Config/$WRT_CONFIG.txt" 2>/dev/null; then
+            echo "WRT_TAYGEDO=true" >> $GITHUB_ENV
+          else
+            echo "WRT_TAYGEDO=false" >> $GITHUB_ENV
+          fi
           # MT 模式标签：用于产物文件名 / Release Tag / 配置导出，区分双配置并行编译
           if [ -z "${MT_MODE:-}" ]; then
             echo "WRT_MT=NONE" >> $GITHUB_ENV
@@ -414,16 +426,16 @@ jobs:
       #
       # 位置与上面的 fm350 / netwiz 步骤同理，必须在「生成配置并执行
       # defconfig」之前：make defconfig 只认 package/ 树里此刻已存在的
-      # Makefile，包未就位时 CONFIG_PACKAGE_luci-app-netmonitor=y 是孤立符号，
-      # 会被连依赖一起丢弃，结果是「编译全绿、固件里没有该插件」。
+      # Makefile，包未就位时 CONFIG_PACKAGE_luci-app-netmonitor=y 是孤立
+      # 符号，会被连依赖一起丢弃，结果是「编译全绿、固件里没有这个插件」。
       #
       # luci-app-netmonitor 的 Makefile include feeds/luci/luci.mk（走 LuCI
       # feed 编译框架），故还必须晚于「更新 feeds 软件源」步骤；当前位置已满足。
       #
-      # 历史：本步骤原先还导入 luci-app-taygedo（塔吉多签到），已移除——不使用，
-      # 且其 taygedo-rs 常驻监听 0.0.0.0:8787，与 luci-app-bandix-plus 默认 API
-      # 端口冲突（后者开机 bind 失败 → procd crash loop → LuCI 显示
-      # "bandix-plus is not running"）。
+      # 注：luci-app-taygedo 已从这里剥离，改由下方独立的配置驱动步骤导入。
+      # 本仓库的配置仍未开启它：taygedo-rs 常驻监听 0.0.0.0:8787，与
+      # luci-app-bandix-plus 默认 API 端口冲突（后者开机 bind 失败 → procd
+      # crash loop → LuCI 显示 "bandix-plus is not running"）。
       - name: 导入 luci-app-netmonitor（H5000M 自用变体）
         if: contains(env.WRT_CONFIG, 'NETMONITOR')
         run: |
@@ -440,6 +452,35 @@ jobs:
             exit 1
           fi
           echo "luci.mk 就位：$LUCI_MK"
+
+      # luci-app-taygedo（塔吉多签到）：配置驱动导入，与机型名解耦。
+      #
+      # 触发条件只有一个 —— Config/$WRT_CONFIG.txt 里写了
+      # CONFIG_PACKAGE_luci-app-taygedo=y（上一步「初始化构建变量」已把结果
+      # 落到 env.WRT_TAYGEDO）。因此给 X86 / AP3000M / MT5700 等任何机型加
+      # 这个插件都只需要动配置文件一行，不必改本工作流。
+      #
+      # 取包脚本 Scripts/Packages-Taygedo.sh 负责三件事：
+      #   1. 从 monorepo 提取 openwrt/luci-app-taygedo 到 package/ 一级；
+      #   2. 按包内 TAYGEDO_ARCHIVE 模板解析真实资产名，并在 Release 里
+      #      做可达性探测 / 版本对齐（上游双形态拆分后必须取 *-openwrt.tar.gz，
+      #      取无后缀的通用版会把已移除的 WebUI 带回路由器）；
+      #   3. 预下载归档到 dl/ 并校验内容，把「深层编译期 404 / 坏归档」
+      #      提前到取包阶段。
+      #
+      # 同样必须早于 defconfig：包未就位时该符号会被 defconfig 悄悄丢弃。
+      - name: 导入 luci-app-taygedo（配置驱动，可选）
+        if: env.WRT_TAYGEDO == 'true'
+        env:
+          # 可选：对 taygedo-CI 有只读权限的 PAT。缺省时脚本走匿名访问
+          # （公开仓库 Releases 匿名可读），仅在 GitHub 匿名限流时才有必要配。
+          # 注意不能复用 env.GITHUB_TOKEN —— 它只对当前仓库有效，拿去调
+          # taygedo-CI 的 API 会 404。
+          TAYGEDO_TOKEN: ${{ secrets.TAYGEDO_TOKEN }}
+        run: |
+          cd ./wrt/package/
+
+          $GITHUB_WORKSPACE/Scripts/Packages-Taygedo.sh
 
       - name: 生成配置并执行 defconfig
         run: |
@@ -663,6 +704,50 @@ jobs:
 
           echo "luci-app-netmonitor / luci-app-podman（含后端与容器网络初始化）已就位且已被 .config 选中（MT5700 方案一致）"
 
+      # luci-app-taygedo 的选中校验：与导入步骤同样由配置驱动，任何机型
+      # 只要在 Config 里声明了该包就会走这里。三层断言分别覆盖三种真实
+      # 失败形态：
+      #   1. 包目录缺失 —— 取包脚本没跑 / clone 失败 / monorepo 布局变更；
+      #   2. .config 未选中 —— 包在 defconfig 之后才就位（或被依赖裁掉）；
+      #   3. 预编译二进制没进包 —— curl 404 被 Build/Prepare 吞掉，
+      #      「编译全绿但设备上没有 /usr/bin/taygedo-rs」。
+      - name: 校验 luci-app-taygedo 已选中
+        if: env.WRT_TAYGEDO == 'true'
+        run: |
+          cd ./wrt/
+
+          if [ ! -d ./package/luci-app-taygedo ]; then
+            echo "::error::package/luci-app-taygedo 不存在：Packages-Taygedo.sh 未执行或 clone 失败"
+            exit 1
+          fi
+
+          if ! grep -qx 'CONFIG_PACKAGE_luci-app-taygedo=y' ./.config; then
+            echo "::error::.config 未选中 luci-app-taygedo：包是否在 make defconfig 之前就位？"
+            grep -i 'taygedo' ./.config || echo "（.config 中无任何 taygedo 相关行）"
+            exit 1
+          fi
+
+          # 两种模式的前置条件不同：源码模式看「Rust 工程是否就位且 Makefile
+          # 支持本地产物优先」，预编译模式看「Release 资产是否已落到 dl/」。
+          # 用 glob 而不是重算 triple，避免与脚本里的架构推导逻辑分叉。
+          if [ -f ./package/luci-app-taygedo/rust/Cargo.toml ]; then
+            if ! grep -q 'TAYGEDO_LOCAL_BIN' ./package/luci-app-taygedo/Makefile; then
+              echo "::error::包 Makefile 未声明 TAYGEDO_LOCAL_BIN：本地产物会被忽略，源码编译白做"
+              exit 1
+            fi
+            echo "luci-app-taygedo 已就位、已被 .config 选中，Rust 工程在 rust/ 就绪（源码编译模式）"
+          else
+            # 后缀必须是 -openwrt：无后缀那份是自带 WebUI 的通用版，取错等于
+            # 把已从 OpenWrt 产物里移除的 WebUI 又塞回路由器。
+            TG_ASSET=$(ls ./dl/taygedo-rs-*-openwrt.tar.gz 2>/dev/null | head -n1 || true)
+            if [ -z "$TG_ASSET" ]; then
+              echo "::error::dl/ 中没有 taygedo-rs-*-openwrt.tar.gz：预编译二进制未就位，固件会缺少 /usr/bin/taygedo-rs"
+              ls -l ./dl/ 2>/dev/null | grep -i taygedo || echo "（dl/ 中无任何 taygedo 相关文件）"
+              exit 1
+            fi
+            echo "luci-app-taygedo 已就位、已被 .config 选中，预编译资产 $(basename "$TG_ASSET") 在 dl/ 就绪（预编译模式）"
+          fi
+
       - name: 预下载源码包
         if: env.WRT_TEST != 'true'
         run: |
@@ -766,6 +851,40 @@ jobs:
             sed -i '/^AIRPI_PREBUILT:=1$/d; /^AIRPI_PREBUILT_BIN:=/d' "$PKG_DIR/Makefile"
             rm -rf "$PREBUILT_DIR"
           fi
+
+      # luci-app-taygedo：从源码交叉编译 Rust 后端（openwrt feature 形态）。
+      #
+      # 为什么放在这里而不是「导入插件」阶段：
+      #   make toolchain/install 要求 .config 已生成（即 defconfig 之后），而
+      #   固件编译本身也要这份工具链，提前构建只是调换顺序、不增加总时长；
+      #   放在 defconfig 之前反而会因为不知道目标架构而无法定位 triple。
+      #
+      # 与上面「预编译 AirPi Rust 后端」是同一套思路：宿主机 rustup + OpenWrt
+      # staging_dir 里自带的 <arch>-openwrt-linux-musl-gcc 作链接器。区别在于
+      # taygedo 依赖 ring（含 C 与汇编），脚本内置 cross（Docker）兜底，避免
+      # rustc 自带 musl 与 OpenWrt sysroot 的差异把整条固件构建拖死。
+      #
+      # 产物落在 package/luci-app-taygedo/local/taygedo-rs，包 Makefile 见到
+      # 即跳过 Release 下载，install 段不变。
+      - name: 编译 luci-app-taygedo Rust 后端（源码交叉编译）
+        if: env.WRT_TAYGEDO == 'true' && env.WRT_TEST != 'true'
+        run: |
+          cd ./wrt/
+
+          if [ ! -f "$GITHUB_WORKSPACE/Scripts/Build-Taygedo.sh" ]; then
+            echo "::error::Scripts/Build-Taygedo.sh 缺失：源码编译模式无法执行"
+            exit 1
+          fi
+
+          $GITHUB_WORKSPACE/Scripts/Build-Taygedo.sh ./package/luci-app-taygedo
+
+          # 二次确认：脚本退出码为 0 但产物缺失同样视为失败，避免「编译全绿、
+          # 固件里没有 taygedo-rs」的静默降级。
+          if [ ! -s ./package/luci-app-taygedo/local/taygedo-rs ]; then
+            echo "::error::package/luci-app-taygedo/local/taygedo-rs 不存在：源码编译未产出二进制"
+            exit 1
+          fi
+          ls -l ./package/luci-app-taygedo/local/
 
       - name: 编译固件
         if: env.WRT_TEST != 'true'

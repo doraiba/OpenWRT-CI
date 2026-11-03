@@ -8,10 +8,16 @@
 # 由 WRT-CORE 中带 contains(env.WRT_CONFIG,'NETMONITOR') 条件的步骤调用，
 # 现有机型构建路径完全不执行本脚本。
 #
-# 历史：本脚本曾同时导入 luci-app-taygedo（塔吉多每日签到）。该插件已于
-# 2026-10-18 按作者要求移除——不使用，且其 taygedo-rs 常驻监听 0.0.0.0:8787，
-# 与 luci-app-bandix-plus 的默认 API 端口冲突，导致后者开机 bind 失败并进入
-# procd crash loop（LuCI 显示 "bandix-plus is not running"）。
+# 历史：本脚本原先同时负责 luci-app-taygedo（塔吉多签到）。2026-11 起该包
+# 已改为**配置驱动**，由 Scripts/Packages-Taygedo.sh 独立导入 —— 任何机型
+# 只要在 Config/*.txt 写了 CONFIG_PACKAGE_luci-app-taygedo=y 就会生效，
+# 不再与 NETMONITOR 变体绑定。两个包的取包逻辑差异较大（taygedo 需要做
+# Release 资产名解析与版本对齐），合在一起只会让分支互相牵连，故拆分。
+#
+# 本仓库仍**不在**配置里开启 taygedo：其 taygedo-rs 常驻监听 0.0.0.0:8787，
+# 与 H5000M-EXTRA.txt 选中的 luci-app-bandix-plus 默认 API 端口冲突，会让
+# bandix-plus 开机 bind 失败并进入 procd crash loop（LuCI 显示
+# "bandix-plus is not running"）。要用 taygedo 需先给它换端口。
 #
 # 用法（在 OpenWrt 源码树的 package/ 目录下执行）：
 #   $GITHUB_WORKSPACE/Scripts/Packages-NetMonitor.sh
@@ -44,9 +50,9 @@ rm -rf "./${PKG1}/.git" "./${PKG1}/.github"
 
 # ===== 行尾归一化：CRLF → LF（本脚本的核心必要步骤）=====
 #
-# 上游 .gitattributes 为 `* text=auto eol=lf`（强制 LF），正常 clone 出来的
-# 文件就是 LF；此处仍做一次幂等归一化 + 逐文件复核，防止 runner 环境漂移或
-# 上游改动 .gitattributes 时 CR 残留：
+# 上游仓库的 .gitattributes 为 `* text=auto eol=lf`（强制 LF），正常 clone
+# 出来的文件就是 LF；此处仍做一次幂等归一化 + 逐文件复核，防止 runner 环境
+# 漂移或上游改动 .gitattributes 时 CR 残留：
 #   - Makefile：include 路径若带 \r，报 "No such file or directory"，包编不过；
 #   - init.d / 脚本 shebang：变成 "#!/bin/sh /etc/rc.common\r"，procd 启动失败；
 #   - menu.d / acl.d JSON：\r 是字符串外的非法空白，LuCI 解析失败。

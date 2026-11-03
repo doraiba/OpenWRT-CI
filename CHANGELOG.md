@@ -1,4 +1,34 @@
 # 更新日志
+## [2026-11-03] 同步上游：luci-app-taygedo 改为配置驱动 + Rust 源码交叉编译
+
+上游三个提交（`dd5663b` `4d3f405` `ddba852`）把 `luci-app-taygedo` 从
+NETMONITOR 脚本里剥离，改为**配置驱动**：任何 `Config/*.txt` 写了
+`CONFIG_PACKAGE_luci-app-taygedo=y` 就自动导入，与机型名无关；后端也改为
+**源码交叉编译** Rust（复用 AirPi 的 rustup + OpenWrt staging_dir 工具链，
+避免连 rustc 一起编 1.5~3 小时），源码编译不可用时才回退 Release 预编译资产。
+
+已并入：`Scripts/Packages-Taygedo.sh`、`Scripts/Build-Taygedo.sh`、
+WRT-CORE 里的导入 / 选中校验 / 后端编译三个步骤，以及由配置内容推导的
+`WRT_TAYGEDO` 开关。
+
+**本仓库仍未开启该包**——`Config/H5000M-WIFI-YES-NETMONITOR.txt` 里那行保持
+注释状态：`taygedo-rs` 常驻监听 `0.0.0.0:8787`，与 `H5000M-EXTRA.txt` 选中的
+`luci-app-bandix-plus` 默认 API 端口冲突，会让后者开机 bind 失败并进入 procd
+crash loop（LuCI 显示 "bandix-plus is not running"）。因此 `WRT_TAYGEDO=false`，
+三个 taygedo 步骤自动跳过，本仓库产物与 `自用-26.11.02` 功能一致。
+
+冲突处理：
+
+- `WRT-CORE.yml`：保留我们的 netmonitor / podman 断言与风扇下限断言，并入上游
+  的 taygedo 导入步骤与选中校验步骤，步骤顺序仍满足「导入早于 defconfig、
+  编译晚于 defconfig」；
+- `Config/H5000M-WIFI-YES-NETMONITOR.txt`：保留 CA 证书库段，并入上游 taygedo
+  说明段（CONFIG 行按上面理由注释）；
+- `Scripts/Packages-NetMonitor.sh`：采纳上游「taygedo 已拆分为独立脚本」的描述，
+  并保留 8787 端口冲突这条历史结论；
+- `README.md`：保留 bandix-plus / oaf / podman 三行，补 taygedo 一行并标注
+  「配置驱动，本仓库默认未开启」。
+
 ## [2026-11-02] 修复：静音模式风扇仍输出 50%（内核 cooling-map 下限顶住曲线）
 
 ### 现象
