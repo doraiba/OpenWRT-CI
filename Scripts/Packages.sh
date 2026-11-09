@@ -450,9 +450,20 @@ FOLD_MT5700M() {
 # ===== MT5700（方案 B）：luci-app-mt5700 单包（Rust 后端由包内 src/Makefile 编译）=====
 # 该包 Makefile 的 LUCI_DEPENDS 为空，不依赖 sms-tool_q / ubus-at-daemon。
 # 包内 src/Makefile 会在 OpenWrt 包编译阶段调用宿主 cargo 交叉编译 at-webserver-rust，
-# 因此这里需要预先装好 rustup + 目标 target，并把 cargo PATH / RUSTFLAGS
-# 写入 GITHUB_ENV，供后续 Compile Firmware 步骤使用。
-# 链接器必须用 rust-lld（自包含 musl），否则 rustc 会驱动宿主 cc，交叉编译失败。
+# 因此这里需要预先装好 rustup + 目标 target，并把 cargo 的 PATH 追加进 GITHUB_PATH。
+#
+# 链接器配置只能写进 src/rust/.cargo/config.toml，不能走 RUSTFLAGS 环境变量：
+# include/toplevel.mk 有
+#   unexport $(foreach v,$(filter CARGO CARGO_% RUST% SCCACHE_%,$(.VARIABLES)), ...)
+# 会把一切来自环境的 RUST*/CARGO_* 从包构建中摘掉，GITHUB_ENV 里的 RUSTFLAGS
+# 永远到不了 cargo —— 表现为 rustc 退回宿主 cc 作链接驱动，而 cc 背后的
+# /usr/bin/ld 是 x86 的 BFD，不认 aarch64 专属的 --fix-cortex-a53-843419
+# （ring 的 build.rs 会为 rustls 注入该选项），最终 linking with `cc` failed。
+# config.toml 由 cargo 自己读取，make 无从剥离，是唯一可靠的通道。
+#
+# 链接器取交叉 gcc 而非 rust-lld：rust-lld 不是编译器驱动，接不住 ring 传来的
+# -Wl, 前缀参数；<arch>-openwrt-linux-musl-gcc 与固件同一份 musl，其 ld 认得
+# 该 erratum 选项（Build-Taygedo.sh 处理 ring 用的就是它）。
 SETUP_RUST_FOR_MT5700() {
 	local RUST_TARGET="aarch64-unknown-linux-musl"
 	case "${WRT_TARGET:-${WRT_CONFIG:-}}" in
@@ -482,36 +493,24 @@ SETUP_RUST_FOR_MT5700() {
 		echo "RUSTUP_HOME=$HOME/.rustup" >> "$GITHUB_ENV"
 	fi
 
-	# ⚠️ 交叉链接参数只作用于本包的 cargo，**绝不能**写全局 RUSTFLAGS。
-	#
-	# 历史做法是 echo "RUSTFLAGS=-C link-self-contained=yes -C linker=rust-lld"
-	# 进 GITHUB_ENV，让后续「编译固件」步骤继承。这在只有 luci-app-mt5700
-	# 一个 Rust 消费者时没问题，但一旦配置里出现 feeds 的 Rust 包
-	# （podman 的 netavark / aardvark-dns 就是），全局 RUSTFLAGS 会一并作用到
-	# package/feeds/packages/rust/host：宿主 target 下 rust-lld 找不到
-	# -lgcc_s / -lutil / -lrt / -lpthread / -lm / -ldl / -lc，报
-	#   error: linking with `rust-lld` failed: exit status: 1
-	# 于是在编译第 18 分钟死在 rust/host，与 podman 本身无关。
-	#
-	# 也不能改用 src/rust/.cargo/config.toml：luci.mk 的 Build/Prepare 是
-	# `$(CP) ./src/*`，glob 不含隐藏目录，.cargo 不会被拷进 PKG_BUILD_DIR。
-	# 因此这里直接把 env 前缀写进包内 src/Makefile 的 cargo 命令行——
-	# 作用域精确到这一次 cargo 调用，feeds 的 rust/host 完全不受影响。
-	local MK="./luci-app-mt5700/src/Makefile"
-	if [ -f "$MK" ]; then
-		if ! grep -q 'link-self-contained=yes' "$MK"; then
-			sed -i.bak 's|cargo build \$(CARGO_BUILD_STD_FLAGS)|RUSTFLAGS="-C link-self-contained=yes -C linker=rust-lld" cargo build $(CARGO_BUILD_STD_FLAGS)|' "$MK"
-			rm -f "$MK.bak"
-		fi
-		if grep -q 'link-self-contained=yes' "$MK"; then
-			echo "luci-app-mt5700: rust-lld 自包含链接参数已写入包内 src/Makefile（作用域仅限本包）"
-		else
-			echo "ERROR: luci-app-mt5700: 未能在 src/Makefile 中注入 rust-lld 链接参数，交叉编译会失败" >&2
-			exit 1
-		fi
+	# 链接器写进 crate 目录的 .cargo/config.toml（原因见函数头注释）。
+	# 写成 [target.<triple>] 段而非全局 build.rustflags：proc-macro 与 build.rs
+	# 必须继续用宿主链接器，全局段会让它们一起变成交叉链接而失败。
+	local CARGO_CFG_DIR="./luci-app-mt5700/src/rust/.cargo"
+	if [ ! -d "./luci-app-mt5700/src/rust" ]; then
+		echo "ERROR: luci-app-mt5700: 未找到 src/rust crate 目录，无法写入 cargo 配置" >&2
+		return 1
+	fi
+	mkdir -p "$CARGO_CFG_DIR"
+	local CROSS_GCC="${RUST_TARGET%%-*}-openwrt-linux-musl-gcc"
+	if [ -f "$CARGO_CFG_DIR/config.toml" ]; then
+		echo "luci-app-mt5700: 上游已自带 .cargo/config.toml，保留不覆盖"
 	else
-		echo "ERROR: luci-app-mt5700: 缺少 src/Makefile，无法注入 rust-lld 链接参数" >&2
-		exit 1
+		cat > "$CARGO_CFG_DIR/config.toml" <<CARGOCFG
+[target.$RUST_TARGET]
+linker = "$CROSS_GCC"
+CARGOCFG
+		echo "luci-app-mt5700: 写入 .cargo/config.toml，链接器 = $CROSS_GCC"
 	fi
 }
 

@@ -1,4 +1,392 @@
 # 更新日志
+## [2026-11-09] 同步上游：在线升级全机型内置 + Rust 统一走官方 SDK + 初始化环境容错
+
+上游 `93a33a4..7441952`（14 个提交）的主要变化：
+
+- **全机型内置 `luci-app-online-upgrade`**：新增 `Scripts/Packages-OnlineUpgrade.sh`
+  与 `Scripts/OnlineUpgradePreset.sh`，按 `WRT_DEVICE` / `WRT_TAG_GROUP` 生成升级源
+  预设；`Settings.sh` 对全部配置统一选中该包；
+- **Rust 后端统一走官方 Rust SDK 交叉编译**：新增 `Scripts/Build-Rust-Prebuilt.sh`，
+  接入 cargo 注册表与产物双层缓存；
+- **初始化编译环境容错**：apt 镜像按真实吞吐择优、有界重试、步骤硬超时；
+- **`luci-app-mt5700` 的 ring 交叉链接改走 `.cargo/config.toml`**：改用
+  `<arch>-openwrt-linux-musl-gcc` 作链接器，不再依赖全局 `RUSTFLAGS`；
+- `luci-app-taygedo` 改为配置驱动 + 源码交叉编译（`Packages-Taygedo.sh` /
+  `Build-Taygedo.sh`）。
+
+本仓库的处理：
+
+- `Scripts/Packages.sh` 的 `SETUP_RUST_FOR_MT5700` **采纳上游方案**，删掉我们早前
+  「sed 注入包内 `src/Makefile` 的 RUSTFLAGS」那套：上游用 crate 目录下的
+  `src/rust/.cargo/config.toml`，`luci.mk` 的 `$(CP) ./src/*` 会整目录递归拷贝，
+  `.cargo` 随之进入 `PKG_BUILD_DIR`，作用域同样只限本包，且不碰 feeds 的
+  `rust/host`（避免了当初 podman 编译时 `rust-lld` 找不到 `-lgcc_s` 的死法）；
+- `luci-app-taygedo` 只并入机制、**不开启**：配置里不写
+  `CONFIG_PACKAGE_luci-app-taygedo=y`，`WRT_TAYGEDO=false`，导入 / 校验 / 编译三个
+  步骤自动跳过（`taygedo-rs` 的 8787 与 `bandix-plus` 默认 API 端口冲突）；
+- Release 分组说明与 README 的「自用」描述从「NetMonitor + Taygedo」改为
+  「NetMonitor + Podman」，与产物实情一致。
+
+冲突处理：`Scripts/Packages.sh` 取上游；`README.md` 保留 bandix/oaf/podman 三行并补
+`online-upgrade`，taygedo 行标注「本仓库默认未开启」；`CHANGELOG.md` 双方条目全部
+保留（上游 11-06~11-08 在前，本仓库 11-02/11-03 在后）。
+
+## [2026-11-08] 全机型内置 `luci-app-online-upgrade` 并按机型预设升级配置
+
+### 背景
+
+仓库里的「机型」由 `Config/*.txt` 配置片段 + `WRT-CORE.yml` 运行期变量
+（`WRT_DEVICE` / `WRT_FLAVOR` / `WRT_TAG_GROUP`）共同决定：3 个硬件机型
+（H5000M / AP3000M / X86）各带 5~6 种变体，合计 16 份设备配置。
+在线升级插件此前不在任何机型的构建里，用户升级只能手动下载固件。
+
+插件的检查/下载/刷写全部由 Rust 二进制 `online-upgrade` 完成，Makefile 的
+`Build/Prepare` 与 `Build/Compile` 为空，因此**必须在构建阶段把二进制预编译好**
+放到 `root/usr/bin/online-upgrade`，否则包会装出一个没有可执行文件的空壳。
+
+### 变更
+
+新增脚本：
+
+- `Scripts/Packages-OnlineUpgrade.sh`：全机型无条件把插件源码 clone 到
+  `package/luci-app-online-upgrade/`。仓库不是 feeds 布局，走 tree 内 clone；
+  直连失败回退 `https://gh.acg2.mom/` 镜像；清掉 `.git` / `.github`；
+  文本文件统一转 LF 并按字节复核；四段结构断言（`feeds/luci/luci.mk` 引用、
+  `./root/usr/bin/online-upgrade` 安装项、`rust/Cargo.toml`、默认 UCI 配置）
+  任一不满足即失败，避免上游改布局后静默产出坏包。另做 v2 二进制路径
+  三方对齐断言：上游 `90-online-upgrade-auto` 曾判定 v1 的
+  `/usr/bin/online-upgrade.sh`，该缺陷已在上游 `98a966a` 修复为
+  `[ -x /usr/bin/online-upgrade ]`，因此脚本改为按内容判定、幂等 ——
+  仅检测到 v1 路径时才改写，上游已修复则一行不动；最终断言文件内无
+  `online-upgrade.sh`、守卫判定的就是 `/usr/bin/online-upgrade`，
+  与 `Makefile` 安装项、WRT-CORE 预编译落点三者一致。
+- `Scripts/OnlineUpgradePreset.sh`：按机型生成 `./files/etc/config/online-upgrade`
+  （overlay 约定路径，打进 rootfs）。设备→固件名正则：
+  `X86` → `^X86-.*-efi\.img\.gz$`，`H5000M`/`AP3000M` →
+  `^<设备>-.*sysupgrade\.bin$`；发布通道归组取 `latest@^<WRT_TAG_GROUP>-`；
+  其余 8 项（`repo` / `min_size_mb` / `proxy` / `expected_sha256` /
+  `dl_workers` / `dl_chunk_mb` / `dl_stall_sec` / `dl_retries`）写固定默认值。
+  生成后自检键数与 tag 一致性。
+
+改动：
+
+- `Scripts/Settings.sh`：无条件追加 `CONFIG_PACKAGE_luci-app-online-upgrade=y`，
+  并调用 `OnlineUpgradePreset.sh` 生成预设。
+- `.github/workflows/WRT-CORE.yml`：
+  - defconfig 之前新增「导入 luci-app-online-upgrade（全机型）」；
+  - 「预编译全部 Rust 后端」新增第 ④ 段，用 `RUST_NO_INJECT=1` +
+    `RUST_OUT_BIN` 把二进制直接落到包内安装路径，并校验产物非空；
+  - 「预下载源码包」之前新增校验步骤，断言包已导入、`.config` 已选中、
+    Makefile 安装项仍在、预设 `firmware_pattern` / `tag` 与本机型一致。
+- `README.md`：插件矩阵补一行；新增「在线升级」小节，含各机型预设、
+  X86 UEFI/BIOS 需人工确认的提醒、10 个配置项含义表。
+
+### 验证
+
+- 两个新脚本 `bash -n` 通过；按 H5000M / AP3000M / X86 × MT5700 / FM350 /
+  NetWiz / 自用 / BASE 组合模拟生成预设，10 个键齐全且正则可匹配实测
+  Release 资产名（`H5000M-MT5700-sysupgrade.bin`、`AP3000M-MT5700-sysupgrade.bin`、
+  `X86-NETWIZ-MT5700-efi.img.gz`）。
+- `WRT-CORE.yml` YAML 解析通过；`.config` 键名与上游 `Makefile` 的
+  `BuildPackage` 包名一致。
+- `Scripts/Packages-OnlineUpgrade.sh` 在本地实跑通过：clone 成功、20 个文本
+  文件行尾复核为 LF、四段结构断言通过；上游守卫已是 v2 路径，脚本未改写并
+  通过一致性断言。另用构造用例验证了「检测到 v1 → 改写」与「守卫路径不符
+  → 构建失败」两个分支。
+- 未验证：完整固件构建需 ubuntu runner + OpenWrt 交叉工具链，本地无法执行；
+  X86 取 UEFI（`efi.img.gz`）而非 BIOS（`combined.img.gz`）需按实际刷机方式确认。
+
+## [2026-11-07] 修复定时编译全部卡在「初始化编译环境」：镜像切换重试 + 步骤硬超时
+
+### 背景
+
+2026-11-07 05:04 UTC 一轮定时编译中，NetWiz / FM350 / X86 三组共 7 个 job 全部
+失败在「初始化编译环境」，同批 2 个 job 成功。对比两边：
+
+- 成功 job 该步骤耗时 3 分 28 秒（05:04:16 → 05:07:43），全程走
+  `azure.archive.ubuntu.com`，46.5 MB 的包 0.8 秒下完；
+- 失败 job 该步骤从 05:04 一直跑到 06:06~06:50（62~106 分钟），最终被 runner
+  判定通信超时；这批 job 的日志在 API 侧整段缺失
+  （`/actions/jobs/<id>/logs` 返回 `BlobNotFound`），只剩步骤状态可见。
+
+也就是说 11-06 加入的「探测择优 + 有界重试」没有覆盖今天的形态：探测发生在
+步骤开始那一瞬，判定 azure 正常；随后 bulk 下载断连，而 `timeout` 只给直接
+子进程（bash）发信号，脚本里的 apt/dpkg 变成孤儿继续持锁并占用日志管道，
+step 迟迟不结束，直到 runner 失联、日志一并丢失。另外上游脚本第一步就是
+`apt full-upgrade -y`，每天拉一遍全量升级，进一步放大了下载量。
+
+### 变更
+
+`.github/workflows/WRT-CORE.yml`：
+
+- **「初始化编译环境」增加 `timeout-minutes: 60`**：宁可早失败并保留日志，
+  也不让镜像黑洞把 job 拖到 runner 失联。
+- **「选择 apt 镜像」输出 `APT_MIRROR`**：记录本次判定的主镜像，供重试时切换。
+- **重试改为换链路**：单次上限 1800 s → 1500 s；第二次尝试前调用
+  `switch_apt_mirror`，在 `azure.archive.ubuntu.com` 与 `archive.ubuntu.com`
+  之间互换（同时重写 `apt-mirrors.txt` 与 `sources.list.d/*.sources`）。
+  探测正常但随后断连的场景由此获得一次真正换源的机会。
+- **重试前清理孤儿进程**：`kill_stalled_init` 按名字清掉残留的
+  `init_build_environment.sh` / `apt` / `apt-get` / `dpkg`，避免第二次
+  卡在 dpkg 锁上，也避免管道被孤儿进程占住导致 step 不结束。
+- **收紧传输参数**：新增 `Acquire::http::Connection-Timeout "15"`（原只有
+  数据空闲超时，建连黑洞不受控），`Acquire::Retries` 3 → 5。
+- **禁用上游脚本的 `apt full-upgrade -y`**：托管 runner 镜像本身已是近期更新，
+  `apt install` 也会按需升级依赖，全量升级对编译零收益却显著放大下载量。
+  用 sed 注释该行并校验命中；上游改写法未命中时输出 warning 并保留原行为，
+  不静默跳过、也不硬失败。
+
+### 验证
+
+- `yaml.safe_load` 解析通过，`core` 共 36 个步骤；两个改动步骤的 `run` 块
+  经 `bash -n` 语法检查通过。
+- full-upgrade 补丁在真实上游脚本（2026-10-29 版）上实测：命中第 228 行并
+  注释为 `# [CI] 跳过 full-upgrade …: apt full-upgrade -y $BPO_FLAG`，
+  补丁后脚本 `bash -n` 通过。
+- 实际提速与重试切换行为待本轮 `TEST=true` 手动编译确认。
+
+## [2026-11-07] 全部 Rust 插件改走官方 Rust SDK 交叉编译 + cargo 缓存提速
+
+### 背景
+
+11-06 的 mt5700 链接修复（`.cargo/config.toml`）解决了「能不能编过」，但三个 Rust
+插件 —— `luci-app-mt5700`（at-webserver，含 tokio/rustls/ring）、
+`luci-app-h5000m-fancontrol`（零依赖）、`luci-app-fm350`（fm350d）—— 仍然把 cargo
+埋在包内 Makefile 里，随「编译固件」在 build_dir 里编译：
+
+- build_dir 每轮 CI 清空，Rust 依赖树每次从零构建。mt5700 单包 ~90 秒，fm350d
+  依赖更重，全在固件编译中段排队，串行吃掉总时长；
+- 这条链路依赖 buildroot 对 `CARGO_HOME`/`PATH` 的透传。`toplevel.mk` 会剥离环境里的
+  `CARGO*`/`RUST*`，11-06 五个工作流全红证明这条透传链有多脆弱 —— 修复只是把
+  配置换成了 make 剥不掉的通道，cargo 依然跑在 buildroot 里；
+- 产物到了固件编译中后期才暴露问题（坏链接器、坏架构都要等到 make 编到该包）。
+
+而 taygedo / airpi 早已是「runner 侧 rustup 官方工具链预编译 → 注入产物」的形态，
+稳定运行已久。三个滞留包是历史欠账。
+
+### 变更
+
+- **新增 `Scripts/Build-Rust-Prebuilt.sh`**：统一 Rust 后端预编译器，在 runner 侧
+  （buildroot 外）用 rustup 官方工具链交叉编译，rustc/cargo 始终来自官方 SDK，
+  全程不触发 OpenWrt 的 `rust/host` 源码构建。要点：
+  - 架构取 defconfig 后的 `.config`（`CONFIG_TARGET_ARCH_PACKAGES`），映射到
+    `<arch>-unknown-linux-musl` triple；
+  - 链接器用 `staging_dir` 里与固件同源的 `<arch>-openwrt-linux-musl-gcc`（缺失时
+    先 `make toolchain/install`，命中工具链缓存秒过；零依赖 crate 无链接器时回退
+    rustc 自带 self-contained musl）；
+  - `CC_<triple>` / `AR_<triple>` / `CARGO_TARGET_<TRIPLE>_LINKER` 三套并设，覆盖
+    ring 的 `cc` crate 与 cargo 各自的读取习惯；包内 rsproxy 镜像配置临时清空
+    （runner 在境外，直连 crates.io 更快）；
+  - `cargo build --locked --release --target <triple>`，产物先过尺寸/静态性
+    （无 INTERP）/架构（`file`）三重自检再落盘；
+  - **cargo 目标目录固定在 `./wrt/.rust-build/<包名>/target`** —— 这是提速的关键：
+    配合 CI 缓存，依赖不变时只增量重编业务 crate（秒级），依赖树不再每次从零构建；
+  - 幂等：BUILD-INFO 记录 src_rev + triple，同源同靶直接复用产物。
+- **注入 `CI-RUST-PREBUILT` 守卫块**：编译成功后向包 Makefile 追加守卫（fm350 为
+  `$(eval` 之前插入，重指 `RUST_OUT` 并把 `Build/Compile` 换成存在性校验；luci.mk
+  型包覆盖 `compile` 目标取用 `<包>/prebuilt/<bin>`）。产物缺失时 wildcard 守卫
+  自动失效，回退原始 cargo 路径 —— `Packages.sh` 写入的 `.cargo/config.toml`
+  链接器兜底（11-06 修复）原样保留，形成双保险。注入不识别包结构时显式告警跳过，
+  绝不瞎改。
+- **`WRT-CORE.yml` 新增三个步骤**：
+  - 「计算 Rust 依赖缓存键」：所有包 `Cargo.lock` 内容做 sha1 指纹，绑定缓存 key
+    （与 OpenWrt 上游 commit 解耦：上游漂移不使 Rust 缓存失效）；
+  - 「恢复/保存缓存（Rust 交叉编译产物 & cargo 注册表）」：`./wrt/.rust-build`、
+    airpi / taygedo 的既有目标目录、`~/.cargo/registry`、`~/.cargo/git` 一次收齐，
+    airpi 与 taygedo 的既有预编译步骤一并向缓存迁移（不改动其脚本本身）；
+  - 「预编译全部 Rust 后端（官方 Rust SDK 交叉编译）」：按 `.config` 实选状态逐包
+    驱动统一脚本，任一失败步骤红掉（不做静默回退）。
+- **删除 fm350 / h5000m-fancontrol 两个 rustup target 准备步骤**：rustup 安装与
+  target 添加由统一脚本自含，不再散落。
+
+### 迁移后的 Rust 包全景
+
+| 包 | 之前 | 现在 |
+|---|---|---|
+| luci-app-mt5700 | buildroot 内 cargo（固件编译期，每次冷编） | runner 预编译 + 守卫注入 + 缓存 |
+| luci-app-h5000m-fancontrol | buildroot 内 cargo | 同上 |
+| luci-app-fm350 | buildroot 内 cargo | 同上 |
+| luci-app-airpi-fancontrol | runner 预编译（无缓存） | 既有脚本 + 注册表/目标目录缓存 |
+| luci-app-taygedo | runner 预编译（无缓存） | 同上 |
+| luci-app-mt5700m（FOLD） | runner 侧 rust-lld，零依赖秒级 | 不变 |
+
+任何包的 buildroot 内 cargo 路径此后只在守卫回退（预编译产物缺失）时才会触发。
+
+### 验证
+
+- `bash -n` 与工作流 YAML 解析通过；新脚本纯 LF。
+- 注入逻辑用三个上游包的真实 Makefile 做 fixture 实测：
+  - fm350 型守卫块准确插在 `$(eval $(call BuildPackage…))` 之前，`RUST_OUT` 重指
+    与 `Build/Compile` 覆盖就位；
+  - mt5700 / h5000m 型守卫分别命中 `$(BIN)` / `$(BINARY)` 变量；
+  - GNU make 实测：产物在位时 `make -n compile` 展开为守卫的 `cp` 路径，产物缺席
+    时回退原始 cargo 配方；`install: compile` 依赖链不受影响；
+  - 重复注入幂等（第二次识别 marker 跳过）。
+- 缓存键计算、恢复/保存步骤的路径与 key 组装经 YAML 解析复核。
+- 沙箱端到端实测（x86_64 宿主 + 真实 cargo）：统一脚本从 `.config` 推导 triple、
+  rustup 装靶（镜像缺件自动回退官方分发源）、cargo 构建至 `.rust-build/<包>/target`、
+  产物自检（静态 pie / 已 strip / 架构匹配）、落盘 `src/prebuilt/`、写入 BUILD-INFO
+  并注入守卫块，全链路通过；注入后的 Makefile 在 `make clean && make install` 下
+  由守卫直接取用产物装配到 DESTDIR，全程零 cargo 调用。
+- 端到端效果（缓存命中后的实际提速、守卫在真实 build_dir 中的取用）待本轮
+  CI 运行确认；当天 6 个定时编译（跑在 11-06 两个修复之后的 main 上）进行中。
+
+## [2026-11-06] 修复编译固件失败：luci-app-mt5700 的 ring 交叉链接改走 .cargo/config.toml
+
+### 背景
+
+`X86-FM350` 之外的 4 个 job 停在「编译固件」，`luci-app-mt5700` 报：
+
+```
+error: linking with `cc` failed: exit status: 1
+  = note: /usr/bin/ld: unrecognized option '--fix-cortex-a53-843419'
+make[4]: *** [Makefile:86: compile] Error 101
+ERROR: package/luci-app-mt5700 failed to build.
+```
+
+`--fix-cortex-a53-843419` 是 aarch64 专属选项，宿主 x86 的 BFD ld 不认；它由 `ring` 的
+build.rs 经 `cargo:rustc-link-arg` 注入。`ring` 是今天才进入依赖树的：上游
+`luci-app-mt5700` 在 18:01 CST 的 PR #46 给 `src/rust` 引入 `tokio-tungstenite` + rustls，
+12:30 UTC 的构建刚好赶上，日志里随即出现 `Compiling ring v0.17.14`。11-05 成功那次
+日志里一条 `Compiling` 都没有 —— 也就是说这条路径此前从未真正链接过 ring。
+
+之所以落到宿主 `cc` 链接，是因为缓解它的 `RUSTFLAGS` 压根到不了 cargo。
+ImmortalWrt `include/toplevel.mk` 有一条：
+
+```make
+unexport $(foreach v,$(filter CARGO CARGO_% RUST% SCCACHE_%,$(.VARIABLES)), \
+	$(if $(filter environment,$(origin $(v))),$(v)))
+```
+
+凡来自环境的 `RUST*` / `CARGO_*` 都会在包构建前被摘掉。所以 `SETUP_RUST_FOR_MT5700`
+写进 `GITHUB_ENV` 的 `RUSTFLAGS=-C link-self-contained=yes -C linker=rust-lld` 是
+**结构性无效**的：失败日志里该变量确实出现在「编译固件」步骤环境中，cargo 却仍用 `cc`
+链接，与此完全吻合。这个机制从建立起就没生效过，只是过去没有 ring 而不暴露。
+
+### 变更
+
+- **`Scripts/Packages.sh`：`SETUP_RUST_FOR_MT5700` 不再写 `RUSTFLAGS` 环境变量**，
+  改为向 crate 目录写 `src/rust/.cargo/config.toml`：
+
+  ```toml
+  [target.aarch64-unknown-linux-musl]
+  linker = "aarch64-openwrt-linux-musl-gcc"
+  ```
+
+  config.toml 由 cargo 自己读取，make 无从剥离，是唯一可靠的通道。链接器取交叉 gcc
+  而非 `rust-lld`：rust-lld 不是编译器驱动，接不住 ring 传来的 `-Wl,` 前缀参数；
+  `<arch>-openwrt-linux-musl-gcc` 与固件同一份 musl，其 ld 认得这个 erratum 选项
+  （`Build-Taygedo.sh` 处理 ring 用的就是它）。失败日志里该名字被裸名调用 1378 次，
+  证明包构建期间它确实在 PATH 上。
+- 写成 `[target.<triple>]` 段而不是全局 `build.rustflags`：proc-macro 与 build.rs
+  必须继续用宿主链接器，全局段会让它们一起变成交叉链接而失败。上游若已自带
+  config.toml 则保留不覆盖。
+- 目标三元组按 `WRT_TARGET` 映射（x86 → `x86_64-...`），crate 目录缺失时显式报错退出，
+  不再静默走回坏路径。
+
+### 验证
+
+- `SETUP_RUST_FOR_MT5700` 产物实测：aarch64 与 x86 两种 `WRT_TARGET` 生成的 config.toml
+  均可被 TOML 解析器读回；重复执行不会覆盖已有配置。
+- ring 的实际交叉链接只能在 CI 上验证，需在 fix 分支跑一轮非 TEST 构建确认。
+
+## [2026-11-06] 修复初始化编译环境：apt 镜像按真实批量吞吐择优，传输超时落盘到 apt.conf.d
+
+### 背景
+
+上一笔「初始化编译环境改为有界重试」（PR #14）合入后，当天 12:30 UTC 的一轮里
+`X86-FM350` 仍停在 `Process completed with exit code 124`（被 `timeout` 判超时）。
+日志显示 661 MB 依赖里 `texlive-binaries` 单个 8.5 MB 走了 3 分钟，即约 50 kB/s；
+同一时段 `deb.nodesource.com` 的 39.5 MB 一秒内下完，同批 job 里也确实有几个全绿
+—— 不是全网抖动，是 `azure.archive.ubuntu.com` 按 runner 随机命中的吞吐退化。
+超时与重试只会把「慢」变成「失败」，不会让它变快。
+
+上游脚本自己调 apt，读不到步骤里那串 `-o Acquire::*` 参数，所以真正会卡死的
+661 MB 下载始终没有任何传输超时。
+
+同类问题在兄弟仓库还多一层：`timeout --kill-after=N sudo <cmd>` 这种顺序下，超时信号
+发给 `sudo` 所在的进程组，`sudo` 被 SIGKILL 后已无力再转发信号，它拉起的 `apt` 成孤儿
+继续持有 `/var/lib/dpkg/lock-frontend`。`OpenWRT-CI-H5000M` 的 MT5700M job 就是这样
+连续 3 轮 `It is held by process 10001 (apt)`，空烧 30 分钟后 exit 1。本仓库的
+`sudo timeout ...` 顺序本来是对的，但缺重试后的可续传保障。
+
+### 变更
+
+- **新增「选择 apt 镜像」步骤**：按实测吞吐在 `azure.archive.ubuntu.com` 与
+  `archive.ubuntu.com` 之间择优。测速目标用 `universe/.../Packages.xz`（15.0 MB，
+  apt 自己就要下载）配 `Range` 只取前 8 MB。小文件测的是连接建立而不是持续吞吐：
+  `OpenWRT-CI-H5000M` run 124 用 1.76 MB 的 `Packages.gz` 探测，实测输出
+  `azure=45627172 archive=1045578`，把退化镜像判成快 44 倍，而几分钟后同一个 azure
+  下 bulk `.deb` 只有约 50 kB/s。新探测下这种退化必然现形：8 MB 在 50 kB/s 时要 160 秒，
+  直接顶穿 `--max-time 25`；azure 正常时 8 MB 不到 1 秒，保持默认。
+  代号取自 `/etc/os-release`，runner 换版后目标 404 会让两边都测到 0，判定退回
+  「保持默认」，属安全降级而非误切换。备用镜像走 `https://`。
+- **写入 `/etc/apt/apt.conf.d/99-ci-transfer-guard`**：传输超时与 `DPkg::Lock::Timeout`
+  移到 apt 自己的配置里，对上游脚本内部的 apt 调用同样生效 —— 这正是上一笔只加在
+  `APT_OPTS` 命令行 `-o` 参数上覆盖不到的部分。既然 conf.d 已覆盖本步骤全部 apt 调用，
+  `APT_OPTS` 就删掉了，超时机制只留一处，不再有两套互相重叠、改一处漏一处的配置。
+- **`init_build_environment.sh` 最多跑两次**：apt 已下载的 .deb 留在
+  `/var/cache/apt/archives`，第二次只补缺的部分，等于断点续传。保持 `sudo` 在前、
+  `timeout` 在后（顺序颠倒就会留下持锁孤儿 apt，见上），并加注释说明原因；
+  失败时 `pgrep -a apt` 把持锁者留在日志里。
+
+### 验证
+
+- 工作流 YAML 通过解析，全部 `run:` 块通过 `bash -n`。
+- 镜像判定逻辑用桩 `curl` 跑五个场景：azure 退化（切换）、两者都正常（不切换）、
+  两边都慢（保持默认）、azure 更快（不降级）、探测失败返回 0（切换）—— 结论均符合预期。
+- 两个探测目标 URL 实测存在、支持 Range，本机批量测速返回量级合理。
+- 实际初始化耗时需在 fix 分支的 CI 上确认。
+
+## [2026-11-06] 修复定时编译全部卡在「初始化编译环境」：apt 下载卡死改为有界重试
+
+### 背景
+
+2026-11-06 的 6 个定时编译工作流（H5000M 双配置 / H5000M 自用 / AP3000M / X86 /
+NetWiz / FM350，共 13 个 job）全部失败，同一时段的 `H5000M-CI-Qmodem`
+（OWRT-ALL 失败 2 个 job、MTK-AUTO 被取消）与 `OpenWRT-CI-H5000M`（MTK-AUTO
+失败 2 个 job）也一样，三仓库共 17 个 job。三仓库 HEAD
+（`ddba852` / `fb3c1de` / `d0060cd`）与 11-05 成功那次完全一致，runner 镜像也
+没变（ubuntu-24.04 / `20261101.360.1`），上游
+`init_build_environment.sh` 的 `Last-Modified` 仍是 2026-10-29，因此不是仓库
+代码、也不是上游脚本漂移。
+
+用 API 取 job 日志时，失败 job 的日志 blob 一律 `BlobNotFound`（整运行的
+日志 zip 只有 22 字节空包，对比 11-05 成功运行同端点 150 KB / 810 KB 正常），
+即 runner 在挂死时被终止、日志根本没上传。check-run 注解只留下
+`The hosted runner lost communication with the server`。
+
+复跑同一个 job（`42142545093` attempt 2）拿到了日志，定位到真实卡点：整段
+`初始化编译环境` 从 11:16:51 一直跑到被取消的 11:58（41 分钟仍未走完），日志
+里是一条条 `Get: http://azure.archive.ubuntu.com/...` 的依赖下载，单包间隔
+20 s / 40 s / 174 s / 186 s / **549 s**，其中 `texlive-bibtex-extra` 单个包
+79.1 MB、`texlive-base` 21.7 MB。同一批命令在诊断探针里（11:42 的另一台
+runner）整段只用 2 分 53 秒，`upstream rc=0`。结论：托管 runner 的 Ubuntu 镜像
+偶发单包卡死，把 3.5 分钟的步骤拖成 40 分钟以上，最终触发 runner 通信超时。
+
+### 变更
+
+- `.github/workflows/WRT-CORE.yml`「初始化编译环境」：
+  - 所有 apt 调用加 `APT_OPTS`（`Acquire::http::Timeout=30`、
+    `Acquire::https::Timeout=30`、`Acquire::Retries=3`），单包卡住 30 s 后
+    放弃并重试，不再无限等待；
+  - 上游 `init_build_environment.sh` 由 `bash <(curl -sL ...)` 改为
+    `curl -fsSL --connect-timeout 15 --max-time 180` 先落盘再执行，下载失败
+    直接失败（原写法在下载失败时会执行空脚本并"成功"退出）；
+  - 上游脚本外包 `timeout 1800`：正常 3~5 分钟，超过 30 分钟按镜像异常处理，
+    立即失败并保留完整日志，而不是挂到数小时被 runner 终止、日志全丢。
+
+不删任何校验步骤、不提高超时阈值，只把"无限等待"改成"有界失败 + 可查日志"。
+
+### 验证
+
+- 临时诊断工作流在同一份命令序列上实跑：`upstream rc=0`、`[SUCCESS] All
+  dependencies have been installed.`，整段 2 分 53 秒（run 42212196533）。
+- 改动后的命令序列在本分支上用探针工作流逐段复跑：12:06:44 → 12:10:15
+  （3 分 31 秒），同样输出 `[SUCCESS] All dependencies have been installed.`
+  （run 42215163749，验证后已删除该探针）。
+- 定时编译工作流只由 `workflow_run`（自动清理完成）与 `workflow_dispatch`
+  触发，普通 PR 不会触发整条构建；守护逻辑的等效验证是下一次定时运行。
 ## [2026-11-03] 同步上游：luci-app-taygedo 改为配置驱动 + Rust 源码交叉编译
 
 上游三个提交（`dd5663b` `4d3f405` `ddba852`）把 `luci-app-taygedo` 从
