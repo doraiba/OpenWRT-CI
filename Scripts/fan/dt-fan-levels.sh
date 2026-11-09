@@ -13,6 +13,16 @@
 #   cpu-active-low   <&fan 2 2> → trip active-med   85 ℃ → level[2] = 192 (75%)
 #   cpu-active-high  <&fan 3 3> → trip active-high 115 ℃ → level[3] = 255 (100%)
 #
+# （另有 cpu-active-hot，挂的是 cpu0~cpu3 四个 cpufreq 冷却设备，只做降频，
+#   与风扇无关；2026-11-09 复核 owrt 分支时它才出现，不影响本补丁。）
+#
+# 2026-11-09 复核（刷入上游固件 r0-8e4a3ef 实测）：上游并未改动这里 ——
+# /proc/device-tree/pwm-fan/cooling-levels 仍是 0/128/192/255，
+# cooling_device0(pwm-fan) max=3 cur=1，守护进程仍打印
+# reason=auto+kernel-floor target=128。故本补丁继续保留。
+# 注意下限只在 cur_state>=1（约 40 ℃ 以上）时生效，低温段 PWM 可低于 128，
+# 别把「低温不夹」误判成「上游已解除下限」。
+#
 # 于是 CPU 一过 40 ℃ 内核就要求至少 128/255 = 50%，控制器算出来的 40% 会被
 # apply_floor 抬回去。真机实测（3.2.0，CPU 42 ℃，curve_silent=…40:40…）：
 #
