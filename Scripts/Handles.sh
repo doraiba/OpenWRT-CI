@@ -433,9 +433,9 @@ case "$WRT_CONFIG" in
 	# 风扇内核下限：stock DT 把 pwm-fan 挂在 cpu-thermal 的 cooling-map 上，
 	# state 1 对应 cooling-levels[1]=128，即内核强制 50% 下限，静音曲线写 40%
 	# 也会被 apply_floor 抬回 50%（实测 requested 102 → target 128，reason
-	# auto+kernel-floor）。这里把第一档改成 96（≈38%），40~85 ℃ 的下限随之降
-	# 到 38%，85/115 ℃ 的 192/255 兜底与 hot/critical trip 全部保持原样。
-	# 详见脚本头注释。
+	# auto+kernel-floor）。这里把第一档改成 90（≈35%），38~85 ℃ 的下限随之降
+	# 到 35%，85/115 ℃ 的 192/255 兜底与 hot/critical trip 全部保持原样。
+	# 详见脚本头注释（含静音曲线的适配建议）。
 	FAN_DT_SRC="$GITHUB_WORKSPACE/Scripts/fan/dt-fan-levels.sh"
 
 	if [ -f "$FAN_DT_SRC" ]; then
