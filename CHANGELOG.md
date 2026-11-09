@@ -1,4 +1,40 @@
 # 更新日志
+## [2026-11-09] 撤销 LAN 公网 IPv6 前缀修复补丁（上游已修复根因）
+
+真机复核（刷入上游自用版 `r0-8e4a3ef`）确认问题已由上游解决，本仓库那套
+`ip6class` / `ip6assign` 修正不再需要，且其中一段会与 router-tool 抢配置：
+
+| 项 | 上游固件（可正常出公网 IPv6） | 当初出问题时 |
+|---|---|---|
+| `network.lan.ip6assign` | `60` | `60` |
+| `network.lan.ip6class` | 不存在 | `'wan6' 'local'` |
+| `br-lan` 公网地址 | `2408:8445:511:2be2::1/64` | 仅 `fe80::` |
+| IPv6 默认路由 | 有（经 `eth2`） | 无 |
+
+根因仍是 `ip6class` 白名单只认 `wan6`、实际承载前缀的是 `MT5700Mv6`，前缀被过滤；
+`ip6assign=60` 从来不影响 —— 上游只委派 /64 时 netifd 会把整条 /64 挂到 br-lan。
+
+上游的两处修改（同一份 `VIKINGYFY/immortalwrt` 源码）：
+
+- router-tool 不再写 `network.lan.ip6class='wan6' 'local'`（`/rom` 全盘仅迁移脚本
+  还提到该键）；
+- 新增 `uci-defaults/90-router-tool-migrate`，专门删除旧值：
+  `if (!uci.delete('network','lan','ip6class')) die('Cannot remove legacy IPv6 prefix filter')`，
+  只删 router-tool 自己写过、未被用户改过的 `['wan6','local']`，AP 快照一并清理。
+  该文件名历史上不存在，overlay 里没有 whiteout，故「保留配置刷机」首启也会执行。
+
+本仓库的处理：
+
+- 删除 `Scripts/ipv6/98-ipv6-prefix`、`Scripts/ipv6/ipv6-prefix-fix` 及
+  `Scripts/Handles.sh` 里对应的两路注入（uci-defaults + `S19` init 脚本）；
+- 顺带去掉「`ip6assign` 小于 64 就改 64」这段：它已被证明无必要，而 router-tool 的
+  state 把 `lan.ip6assign=60` 当作自己托管的期望值、随 `interface.*` 事件 reload
+  回写，我们的 `S19` 改 64 会被它改回 60，形成来回拉扯；
+- README 目录树同步删除这两行。
+
+若以后上游又把 `ip6class` 写回（例如 router-tool 回退该改动），表现为 LAN 只有
+`fe80::`、`logread | grep odhcpd` 出现 `ra_lifetime 0`，届时再按本条记录加回即可。
+
 ## [2026-11-09] 同步上游：在线升级全机型内置 + Rust 统一走官方 SDK + 初始化环境容错
 
 上游 `93a33a4..7441952`（14 个提交）的主要变化：
