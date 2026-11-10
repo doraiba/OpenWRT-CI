@@ -1,45 +1,32 @@
 # 更新日志
-## [2026-11-10] 同步上游：内置在线升级 / 产物统一命名 / Rust 走官方 SDK
+## [2026-11-10] 补齐上游剩余提交：产物统一命名 + SHA256 校验资产
 
-上游 16 个提交并入（`47d59f1` … `61b01e9`），主要三条：
+接 11-09 那次同步（`93a33a4..7441952`）继续跟进，并入 `7441952..61b01e9`
+的剩余 4 个提交：
 
-1. **全机型内置 `luci-app-online-upgrade`**（`646778f` `7441952`）：新增
-   `Scripts/Packages-OnlineUpgrade.sh` 取包、`Scripts/OnlineUpgradePreset.sh`
-   按机型生成 `files/etc/config/online-upgrade` 出厂预设，`Settings.sh` 统一
-   选中该包；在线升级守卫改为幂等兼容 + 路径三方一致性断言。
-2. **固件产物统一命名**（`e4467ff` `09f7859`）：
-   `<机型>-<模组插件>-<YY.MM.DD>-<固件类型>.<扩展名>`，自用变体的模组段
-   由中文「自用」改为 ASCII `SelfUse`（例：`H5000M-SelfUse-26.11.10-sysupgrade.bin`，
-   旧格式 `H5000M-.-sysupgrade.bin` 不再产生）；Release 仍保留 SHA256 校验资产。
-3. **Rust 后端统一走官方 Rust SDK**（`82ee88e` `a87e17e`）：新增
-   `Scripts/Build-Rust-Prebuilt.sh`，mt5700 / fancontrol / fm350 /
-   online-upgrade 由它交叉编译并接 cargo 缓存；mt5700 的链接器改走包内
-   `.cargo/config.toml`（`toplevel.mk` 会 unexport 环境的 `RUST*`，写
-   `RUSTFLAGS` 到 `GITHUB_ENV` 根本到不了 cargo）。
+- **固件产物统一命名**（`e4467ff`）：`<机型>-<模组插件>-<YY.MM.DD>-<固件类型>.<扩展名>`，
+  自用变体的模组段由中文「自用」改为 ASCII `SelfUse`（`H5000M-SelfUse-26.11.10-sysupgrade.bin`，
+  旧格式 `H5000M-.-sysupgrade.bin` 不再产生）；Release 资产同步收紧。
+- **保留 SHA256 校验资产**（`09f7859`）：按重命名后的固件名重新生成
+  `<固件名>.sha256`，`luci-app-online-upgrade` 下载后可直接校验。
+- `61b01e9` 仅为项目主页移动端排版，不影响构建。
 
-另外 `47d59f1` `70ab8f6` `1afc374` 修复「初始化编译环境」卡死：apt 镜像按真实
-批量吞吐择优 + 有界重试 + 步骤硬超时。
+### 本仓库的适配：在线升级源必须指向本仓库
 
-### 本仓库的适配（合并时所做的判断）
+`Scripts/OnlineUpgradePreset.sh` 的默认值是 `LianXia233/OpenWRT-CI`，而本仓库的
+Release 发在 `doraiba/OpenWRT-CI`。不改这一行会有两种坏结果：自用变体的
+`SelfUse` 资产在上游根本不存在，表现为「检查更新一直失败」；若上游恰好有同名
+资产，则可能把别人的固件装到本机。因此在 `WRT-CORE.yml` 顶层 env 增加：
 
-- **在线升级源改指本仓库**：`WRT-CORE.yml` 顶层 env 增加
-  `ONLINE_UPGRADE_SOURCE_REPO: doraiba/OpenWRT-CI`。上游脚本默认值是
-  `LianXia233/OpenWRT-CI`，不改则固件会去上游仓库找同名资产——自用变体的
-  `SelfUse` 资产在上游不存在，表现为「检查更新一直失败」；若上游存在同名
-  资产，则可能装到别人的固件。
-- **mt5700 链接器方案采纳上游**：放弃本仓库原先「把 rust-lld 写进包内
-  `src/Makefile`」的做法，改用上游的 `.cargo/config.toml` + 交叉 gcc。原因：
-  设全局 `RUSTFLAGS` 会污染 feeds 的 rust/host（podman 的 netavark 就是）；
-  而 `toplevel.mk` 又会把环境的 `RUST*` 全部 unexport，只有 crate 内的
-  config.toml 能可靠生效。该改动只影响 `MT_MODE=MT5700`，自用配置走
-  MT5700M 分支的内联编译，不受影响。
-- **保留本仓库全部定制**：`Scripts/fan/dt-fan-levels.sh`（风扇下限 96）、
-  `Scripts/ipv6/*`（前缀 64 + 开机自愈）、`Scripts/podman/*`（容器网络与存储）、
-  `Config/H5000M-EXTRA.txt`（bandix-plus / oaf）、NETMONITOR 配置里的
-  podman 全套符号与 netmonitor/podman/风扇三条构建前断言，均逐条核对仍在。
-- **`taygedo` 仍关闭**：上游新增了配置驱动与源码编译链路，但本仓库配置里
-  那行保持注释（`#CONFIG_PACKAGE_luci-app-taygedo=y`），原因不变——它的
-  `taygedo-rs` 监听 `0.0.0.0:8787`，与 bandix-plus 默认 API 端口冲突。
+```yaml
+ONLINE_UPGRADE_SOURCE_REPO: doraiba/OpenWRT-CI
+```
+
+### 冲突处理
+
+`CHANGELOG.md` 双方条目全部保留（本条在前，11-09 三条在后）；`README.md` 保留
+bandix / oaf / podman / taygedo 四行并补 `online-upgrade` 一行。
+
 
 ## [2026-11-10] 保留 SHA256 校验资产并按重命名后的固件名重新生成
 
@@ -90,6 +77,95 @@
 ### 兼容性
 
 新 `firmware_pattern` 不匹配旧格式资产，**需要重新编译一次对应归组**，在线升级插件与下载页才会看到新产物；历史 Release 由 `Auto-Clean` 按既有轮换策略自然淘汰。`WRT_TAG_GROUP` / `Tag` 归组规则未变，`Auto-Clean.yml` 无需改动。
+
+## [2026-11-09] 风扇内核下限 96 → 90（≈35%），并给出静音曲线适配建议
+
+用户要求再低一点。`Scripts/fan/dt-fan-levels.sh` 追加的覆盖改为
+`cooling-levels = <0 90 192 255>`，幂等标记同步改为 `h5fan-level-90`，
+`WRT-CORE.yml` 的编译前断言也跟着改成 `<0 90 192 255>`（断言丢了照样编译全绿，
+只在设备上表现为「静音模式还是 50%」，所以必须硬校验）。
+
+**静音曲线怎么适配**（当前 `20:0,35:0,40:37,55:50,70:60,85:75,95:100`）：
+
+- 下限 90/255 ≈ 35.3%；状态 1 由守护进程的兜底阈值 38 ℃ 触发（DT trip 是 40 ℃，
+  但守护进程解析 trip 时用了 `trip-point` 前缀过滤，MTK 的 crit/hot/active-* 全都
+  匹配不到，只能走 38/83/113 兜底，详见设备实测）。
+- 38 ℃ 时静音曲线只有 22%（57）→ 被抬到 90；曲线在 39.8 ℃ 涨到 35% 后接管。
+  也就是说仍有 38~39.8 ℃ 一段 35% 的平坦段，听感上比原来的 37.6% 平台更轻。
+- 想让钳位彻底无感，把低段改成 `20:0,35:0,38:36,55:50,70:60,85:75,95:100`：
+  38 ℃ 即为 36%（91）> 90，下限永不生效；40 ℃ 约 37.6%（96），与现在的曲线
+  几乎重合，55 ℃ 以后完全不变。
+- 高温段仍有一处 2 ℃ 的夹持：状态 2 的兜底阈值 83 ℃ 对应 192（75%），而曲线
+  85 ℃ 才到 75%，83~85 ℃ 会被抬到 75%。要消掉就把 `85:75` 改成 `83:76`，
+  代价是 83 ℃ 起就满 76%。这个差异只有 1~2 个百分点，通常不必动。
+
+## [2026-11-09] 撤销 LAN 公网 IPv6 前缀修复补丁（上游已修复根因）
+
+真机复核（刷入上游自用版 `r0-8e4a3ef`）确认问题已由上游解决，本仓库那套
+`ip6class` / `ip6assign` 修正不再需要，且其中一段会与 router-tool 抢配置：
+
+| 项 | 上游固件（可正常出公网 IPv6） | 当初出问题时 |
+|---|---|---|
+| `network.lan.ip6assign` | `60` | `60` |
+| `network.lan.ip6class` | 不存在 | `'wan6' 'local'` |
+| `br-lan` 公网地址 | `2408:8445:511:2be2::1/64` | 仅 `fe80::` |
+| IPv6 默认路由 | 有（经 `eth2`） | 无 |
+
+根因仍是 `ip6class` 白名单只认 `wan6`、实际承载前缀的是 `MT5700Mv6`，前缀被过滤；
+`ip6assign=60` 从来不影响 —— 上游只委派 /64 时 netifd 会把整条 /64 挂到 br-lan。
+
+上游的两处修改（同一份 `VIKINGYFY/immortalwrt` 源码）：
+
+- router-tool 不再写 `network.lan.ip6class='wan6' 'local'`（`/rom` 全盘仅迁移脚本
+  还提到该键）；
+- 新增 `uci-defaults/90-router-tool-migrate`，专门删除旧值：
+  `if (!uci.delete('network','lan','ip6class')) die('Cannot remove legacy IPv6 prefix filter')`，
+  只删 router-tool 自己写过、未被用户改过的 `['wan6','local']`，AP 快照一并清理。
+  该文件名历史上不存在，overlay 里没有 whiteout，故「保留配置刷机」首启也会执行。
+
+本仓库的处理：
+
+- 删除 `Scripts/ipv6/98-ipv6-prefix`、`Scripts/ipv6/ipv6-prefix-fix` 及
+  `Scripts/Handles.sh` 里对应的两路注入（uci-defaults + `S19` init 脚本）；
+- 顺带去掉「`ip6assign` 小于 64 就改 64」这段：它已被证明无必要，而 router-tool 的
+  state 把 `lan.ip6assign=60` 当作自己托管的期望值、随 `interface.*` 事件 reload
+  回写，我们的 `S19` 改 64 会被它改回 60，形成来回拉扯；
+- README 目录树同步删除这两行。
+
+若以后上游又把 `ip6class` 写回（例如 router-tool 回退该改动），表现为 LAN 只有
+`fe80::`、`logread | grep odhcpd` 出现 `ra_lifetime 0`，届时再按本条记录加回即可。
+
+## [2026-11-09] 同步上游：在线升级全机型内置 + Rust 统一走官方 SDK + 初始化环境容错
+
+上游 `93a33a4..7441952`（14 个提交）的主要变化：
+
+- **全机型内置 `luci-app-online-upgrade`**：新增 `Scripts/Packages-OnlineUpgrade.sh`
+  与 `Scripts/OnlineUpgradePreset.sh`，按 `WRT_DEVICE` / `WRT_TAG_GROUP` 生成升级源
+  预设；`Settings.sh` 对全部配置统一选中该包；
+- **Rust 后端统一走官方 Rust SDK 交叉编译**：新增 `Scripts/Build-Rust-Prebuilt.sh`，
+  接入 cargo 注册表与产物双层缓存；
+- **初始化编译环境容错**：apt 镜像按真实吞吐择优、有界重试、步骤硬超时；
+- **`luci-app-mt5700` 的 ring 交叉链接改走 `.cargo/config.toml`**：改用
+  `<arch>-openwrt-linux-musl-gcc` 作链接器，不再依赖全局 `RUSTFLAGS`；
+- `luci-app-taygedo` 改为配置驱动 + 源码交叉编译（`Packages-Taygedo.sh` /
+  `Build-Taygedo.sh`）。
+
+本仓库的处理：
+
+- `Scripts/Packages.sh` 的 `SETUP_RUST_FOR_MT5700` **采纳上游方案**，删掉我们早前
+  「sed 注入包内 `src/Makefile` 的 RUSTFLAGS」那套：上游用 crate 目录下的
+  `src/rust/.cargo/config.toml`，`luci.mk` 的 `$(CP) ./src/*` 会整目录递归拷贝，
+  `.cargo` 随之进入 `PKG_BUILD_DIR`，作用域同样只限本包，且不碰 feeds 的
+  `rust/host`（避免了当初 podman 编译时 `rust-lld` 找不到 `-lgcc_s` 的死法）；
+- `luci-app-taygedo` 只并入机制、**不开启**：配置里不写
+  `CONFIG_PACKAGE_luci-app-taygedo=y`，`WRT_TAYGEDO=false`，导入 / 校验 / 编译三个
+  步骤自动跳过（`taygedo-rs` 的 8787 与 `bandix-plus` 默认 API 端口冲突）；
+- Release 分组说明与 README 的「自用」描述从「NetMonitor + Taygedo」改为
+  「NetMonitor + Podman」，与产物实情一致。
+
+冲突处理：`Scripts/Packages.sh` 取上游；`README.md` 保留 bandix/oaf/podman 三行并补
+`online-upgrade`，taygedo 行标注「本仓库默认未开启」；`CHANGELOG.md` 双方条目全部
+保留（上游 11-06~11-08 在前，本仓库 11-02/11-03 在后）。
 
 ## [2026-11-08] 全机型内置 `luci-app-online-upgrade` 并按机型预设升级配置
 

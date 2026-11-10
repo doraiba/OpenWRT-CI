@@ -3,7 +3,7 @@
 # H5000M 自用（NETMONITOR）变体专用：把 luci-app-netmonitor 放进 package/
 #
 # 为什么不写进 Scripts/Packages.sh：那是全机型共用入口，改动它会影响
-# H5000M / AP3000M / X86 三套既有构建。该插件只服务作者自用的
+# H5000M / AP3000M / X86 三套既有构建。本插件只服务作者自用的
 # H5000M-WIFI-YES-NETMONITOR 配置（Release 归组「自用」），因此独立成脚本，
 # 由 WRT-CORE 中带 contains(env.WRT_CONFIG,'NETMONITOR') 条件的步骤调用，
 # 现有机型构建路径完全不执行本脚本。

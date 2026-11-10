@@ -63,11 +63,11 @@
 | FM350 模组管理 `fm350` | — | ✅ | — | — | ✅ | — |
 | NetWiz 配网向导 `netwiz` | — | — | ✅ | ✅ | ✅ | — |
 | 网络监控 `netmonitor` | — | — | — | — | — | ✅ |
+| 在线升级 `online-upgrade` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 多网口流量监控 `bandix-plus`（H5000M 专属） | H5000M | H5000M | H5000M | H5000M | H5000M | ✅ |
 | 应用过滤 `oaf`（家长控制，H5000M 专属） | H5000M | H5000M | H5000M | H5000M | H5000M | ✅ |
 | Podman 容器 `podman` | — | — | — | — | — | ✅ |
 | 每日签到 `taygedo`（配置驱动，本仓库默认未开启） | 🟡 可选 | 🟡 可选 | 🟡 可选 | 🟡 可选 | 🟡 可选 | ✅ |
-| 在线升级 `online-upgrade` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 硬件风扇温控 `h5000m/airpi-fancontrol` | H5000M / AP3000M | 包含 | 包含 | 包含 | 包含 | 包含 |
 
 > `✅` 固件默认内置　`🟡` 由编译参数动态决定　`—` 不包含
@@ -273,8 +273,6 @@ OpenWRT-CI/
 │   ├── VerifyMTMode.sh       # 编译前驱动冲突语义安全拦截
 │   ├── Handles.sh            # 静态补丁应用与组件冲突修复
 │   ├── PatchRebase.py        # 客制补丁上下文随上游漂移自动重定基
-│   ├── ipv6/98-ipv6-prefix   # LAN 公网 IPv6 前缀下发修复（首次开机）
-│   ├── ipv6/ipv6-prefix-fix  # 同上，改为每次开机执行，兜住保留配置刷机
 │   ├── podman/98-podman-network # Podman 容器网络首次开机初始化
 │   ├── podman/98-podman-storage # Podman 存储根移出 tmpfs，重启不丢镜像
 │   └── Settings.sh           # 出厂默认 IP / Wi-Fi 编译期注入

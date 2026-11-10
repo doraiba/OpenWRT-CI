@@ -501,7 +501,7 @@ jobs:
 
       # 风扇「内核安全下限」由设备树决定：cpu-thermal 的 cooling-map 指向
       # pwm-fan，内核就会把输出顶到 cooling-levels[1]，原厂是 128 即 50%，
-      # 曲线写 40% 也会被抬回去。补丁把这一档改成 96（≈38%），丢了照样编译
+      # 曲线写 40% 也会被抬回去。补丁把这一档改成 90（≈35%），丢了照样编译
       # 全绿，只在设备上表现为「静音模式还是 50%、很吵」，与 podman 那条同属
       # 最难查的一类，因此在下载与编译之前硬断言。
       - name: 校验 H5000M 风扇下限档位补丁
@@ -512,15 +512,15 @@ jobs:
             echo "::error::未找到 H5000M dts，风扇下限补丁无处可打"
             exit 1
           fi
-          if ! grep -q 'h5fan-level-96' "$DTS"; then
-            echo "::error::$DTS 缺少 h5fan-level-96：静音模式仍会被内核下限抬到 50%"
+          if ! grep -q 'h5fan-level-90' "$DTS"; then
+            echo "::error::$DTS 缺少 h5fan-level-90：静音模式仍会被内核下限抬到 50%"
             exit 1
           fi
-          if ! grep -qE 'cooling-levels = <0 96 192 255>' "$DTS"; then
-            echo "::error::$DTS 的 cooling-levels 不是 <0 96 192 255>"
+          if ! grep -qE 'cooling-levels = <0 90 192 255>' "$DTS"; then
+            echo "::error::$DTS 的 cooling-levels 不是 <0 90 192 255>"
             exit 1
           fi
-          echo "风扇下限已改成 96（≈38%）于 $(basename "$DTS")"
+          echo "风扇下限已改成 90（≈35%）于 $(basename "$DTS")"
 
       # FM350 变体专属：拉取 luci-app-fm350 源码 + 准备 Rust 交叉编译目标。
       # 条件为 contains FM350，H5000M / AP3000M / X86 三套既有构建不执行本步骤。
