@@ -67,6 +67,7 @@
 | 应用过滤 `oaf`（家长控制，H5000M 专属） | H5000M | H5000M | H5000M | H5000M | H5000M | ✅ |
 | Podman 容器 `podman` | — | — | — | — | — | ✅ |
 | 每日签到 `taygedo`（配置驱动，本仓库默认未开启） | 🟡 可选 | 🟡 可选 | 🟡 可选 | 🟡 可选 | 🟡 可选 | ✅ |
+| 在线升级 `online-upgrade` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 硬件风扇温控 `h5000m/airpi-fancontrol` | H5000M / AP3000M | 包含 | 包含 | 包含 | 包含 | 包含 |
 
 > `✅` 固件默认内置　`🟡` 由编译参数动态决定　`—` 不包含
@@ -83,6 +84,50 @@
 > 网络下载。与「预编译 AirPi Rust 后端」共用同一套工具链思路；编译失败时
 > 自动回退 `cross`（Docker），仍失败可设 `TAYGEDO_PREBUILT=1` 退回 Release
 > 预编译资产。
+
+### 3. 在线升级 `luci-app-online-upgrade`（全机型内置）
+
+[`LianXia233/luci-app-online-upgrade`](https://github.com/LianXia233/luci-app-online-upgrade) 是一条「检查 → 下载 → 调 `sysupgrade`」的在线升级链路：LuCI 前端 + `rpcd` ucode 后端 + Rust 静态二进制 `/usr/bin/online-upgrade`（分片并发下载、断点续传、Release 资产正则匹配）。
+
+**接入方式**
+
+- 上游仓库是「包即仓库根」形态（`Makefile` / `root/` / `rust/` 都在根目录），不是 feeds 布局，因此不挂 `src-git` feed；由 [`Scripts/Packages-OnlineUpgrade.sh`](Scripts/Packages-OnlineUpgrade.sh) 在 `defconfig` 之前 clone 进 `package/luci-app-online-upgrade/`。
+- 上游 `Build/Prepare` 与 `Build/Compile` 均为空，安装段直接取 `./root/usr/bin/online-upgrade`，即二进制必须外部预置。本仓库在 [`WRT-CORE.yml`](.github/workflows/WRT-CORE.yml)「预编译 Rust 后端」第 ④ 段用官方 Rust SDK + OpenWrt musl 交叉链接器编译，产物落到包内该路径（`RUST_NO_INJECT=1`，不改上游 Makefile）。
+- [`Scripts/Settings.sh`](Scripts/Settings.sh) 对**全部** `Config/*.txt` 统一打开 `CONFIG_PACKAGE_luci-app-online-upgrade=y`，新增机型无需再逐份改配置。运行期依赖 `rpcd-mod-ucode`、`ucode-mod-fs`、`ucode-mod-uci` 由包 `DEPENDS` 自动拉取。
+
+**各机型预设配置**
+
+预设由 [`Scripts/OnlineUpgradePreset.sh`](Scripts/OnlineUpgradePreset.sh) 在构建期按 `WRT_DEVICE` / `WRT_TAG_GROUP` 生成，落在 `files/etc/config/online-upgrade`（`$(TOPDIR)/files` 会被并入 rootfs），覆盖包自带同名 conffile，首次开机即指向本机型自己的产物：
+
+| 机型 | `firmware_pattern`（正则） | 匹配的实际资产 |
+| :--- | :--- | :--- |
+| H5000M | `^H5000M-[A-Za-z0-9-]+-[0-9]{2}\.[0-9]{2}\.[0-9]{2}-sysupgrade\.bin$` | `H5000M-MT5700-26.11.09-sysupgrade.bin`、`H5000M-FM350-26.11.09-sysupgrade.bin`、自用版 `H5000M-SelfUse-26.11.09-sysupgrade.bin` |
+| AP3000M | `^AP3000M-[A-Za-z0-9-]+-[0-9]{2}\.[0-9]{2}\.[0-9]{2}-sysupgrade\.bin$` | `AP3000M-MT5700-26.11.09-sysupgrade.bin` 等 |
+| X86 | `^X86-[A-Za-z0-9-]+-[0-9]{2}\.[0-9]{2}\.[0-9]{2}-efi\.img\.gz$` | `X86-NetWiz-MT5700-26.11.09-efi.img.gz` 等（UEFI 引导） |
+
+- `tag` 统一为 `latest@^<归组>-`，归组取 `BASE` / `MT5700` / `MT5700M` / `FM350` / `NetWiz` / `自用`，与 Release 的 Tag 前缀一致（如 `latest@^MT5700-` 只在 `MT5700-26.11.09` 这类 Tag 里找最新）。同一归组下三个机型共用 Release，靠 `firmware_pattern` 的设备前缀区分，不会互相取错。
+- **日期段是识别关键**：上游 `version::pick()` 从资产名取「最后一个点分数字」当版本号，`is_date_tag()` 只把 `YY.MM.DD` / `YYYY.MM.DD` 认作日期型版本。固件名带编译日期后，自用 SNAPSHOT 固件的本地构建日期才能与目标版本正确比较新/旧；不带日期（或写成 `20261109`）只能退化成按 Release 发布时间判断。正则里的 `[0-9]{2}\.[0-9]{2}\.[0-9]{2}` 明确锚定日期段，也不会误匹配轮换前遗留的旧格式资产。
+- 模组插件段全 ASCII：自用变体文件名用 `SelfUse`（`Release` 标题与 `Tag` 仍是中文「自用」）。此前用中文导致 GitHub 资产名被字节化成 `H5000M-.-sysupgrade.bin`，既不可读也无法稳定匹配，现已修复。
+- **X86 引导方式需人工确认**：预设按 UEFI 取 `efi.img.gz`。BIOS/Legacy 引导的机器必须把 `firmware_pattern` 里的 `efi` 改成 `combined` —— 两者分区表不同，混用会导致升级后无法引导。
+- 尚未发布过的归组（例如当前没有 `BASE-*` Release）不会报错，只是检查更新时返回「无新版本」，等对应构建出包后自动生效。
+- **v2 二进制路径三方对齐（构建期断言）**：上游 `root/etc/uci-defaults/90-online-upgrade-auto` 曾判定 v1 的 `/usr/bin/online-upgrade.sh`，已于上游 `98a966a` 修复为 `[ -x /usr/bin/online-upgrade ]`。[`Scripts/Packages-OnlineUpgrade.sh`](Scripts/Packages-OnlineUpgrade.sh) 现在**按内容判定、幂等**：只在检测到 v1 路径时才改写，上游已修复则一行不动；随后断言文件内没有 `online-upgrade.sh`、守卫判定的就是 `/usr/bin/online-upgrade` —— 与 `Makefile` 安装项、WRT-CORE 预编译落点三者一致，任一处漂移即构建失败。
+
+**预设的配置项（键名取自上游代码，非推测）**
+
+| 配置项 | 预设值 | 含义 |
+| :--- | :--- | :--- |
+| `repo` | `LianXia233/OpenWRT-CI` | 升级源仓库（GitHub `owner/repo`） |
+| `tag` | `latest@^<归组>-` | `latest` 取最新 Release；`latest@<正则>` 限定 Tag 范围 |
+| `firmware_pattern` | 见上表 | 对 Release 资产名做**正则**匹配，决定下载哪个文件 |
+| `min_size_mb` | `15` | 下载完整性下限（MB），低于即判为截断 |
+| `proxy` | `https://gh.acg2.mom/` | 下载加速前缀，直连 GitHub 不稳时使用 |
+| `expected_sha256` | 留空 | 留空则自动读取 Release 里的 `sha256sums` 总表或 `<固件名>.sha256`（按固件名匹配哈希）；填值则强制校验该哈希 |
+| `dl_workers` | `6` | 分片并发数 |
+| `dl_chunk_mb` | `4` | 单分片大小（MB） |
+| `dl_stall_sec` | `30` | 无进展判定超时（秒），超时后重试该分片 |
+| `dl_retries` | `3` | 分片重试次数 |
+
+> 上游默认配置里还有 `enabled`、`keep_config` 两项，本版本 Rust 与 `rpcd` 代码均未读取，因此预设不写入，避免出现「配了却不起作用」的假象。升级成功后配置由包内 `/lib/upgrade/keep.d/online-upgrade` 保留。
 
 ---
 
@@ -172,7 +217,29 @@
 | `FM350-26.11.01` | 基础母配置 + FM350 模组固件 |
 | `自用-26.11.01` | H5000M 个人专属配置固件 |
 
-固件文件名格式：`<设备>-<产品/方案>-<固件类型>.<扩展名>`（如 `H5000M-MT5700-sysupgrade.bin`、`AP3000M-FM350-factory.bin`）。
+**Releases 只收录可直接刷写的完整固件镜像 + 配套的 SHA256 校验文件**：不再附带 `Config-*.txt`、`.manifest`、`kernel.bin`、`rootfs` 分片等辅助文件；`kernel` / `rootfs` 在打包阶段就被排除，X86 保留 `efi` / `combined` / `iso` / `vmdk` 等完整镜像。
+
+每个 Release 附带两类校验资产，均由打包阶段**按重命名后的固件名重新生成**（OpenWrt 原生的 `sha256sums` 记录的是编译原始文件名，重命名后会失效，故不直接沿用）：
+
+| 校验资产 | 用途 |
+| :--- | :--- |
+| `sha256sums` | 标准聚合表，下载后 `sha256sum -c sha256sums` 可人工核对全部固件；也是 `luci-app-online-upgrade` 的 `checksum_asset` 来源 |
+| `<固件名>.sha256` | 每个固件一份单哈希文件，插件按 `{固件名}.sha256` 精确匹配；同组多机型 job 追加进同一 Release 时文件名唯一，不会被 `--clobber` 互相覆盖 |
+
+> 同组同日多机型 job 共享同一个 Tag，标准 `sha256sums` 总表采用「下载已有表 → 按文件名去重合并 → 再上传」的方式尽量保留其它机型的条目；插件的自动校验以不会冲突的 `<固件名>.sha256` 为主路径，总表即使被覆盖也不影响在线升级。`firmware_pattern` 不匹配校验资产，插件不会把校验文件误当成固件下载。
+
+固件文件名统一为 **`<机型>-<模组插件>-<编译日期>-<固件类型>.<扩展名>`**：
+
+| 段 | 取值 | 说明 |
+| :--- | :--- | :--- |
+| 机型 | `H5000M` / `AP3000M` / `X86` | 由 `WRT_CONFIG` 首段推导 |
+| 模组插件 | `NetWiz-MT5700` / `NetWiz-MT5700M` / `NetWiz-FM350` / `MT5700` / `MT5700M` / `FM350` / `SelfUse` / `BASE` | 全 ASCII；无变体时以 `BASE` 占位，保证所有变体结构一致 |
+| 编译日期 | `YY.MM.DD`（`TZ=UTC-8`，如 `26.11.09`） | 与 Tag 的日期段同源（`WRT_DATE_SHORT`）；既是版本标识，也避免跨天同名互相覆盖 |
+| 固件类型 | `sysupgrade` / `factory` / `initramfs` / `recovery` / `efi` / `combined` / `efi-iso` / `iso` / `efi-vmdk` / `vmdk` | 保留刷机方式判断所必需的信息 |
+
+示例：`H5000M-MT5700-26.11.09-sysupgrade.bin`、`AP3000M-NetWiz-FM350-26.11.09-factory.bin`、`X86-NetWiz-MT5700-26.11.09-efi.img.gz`、`H5000M-SelfUse-26.11.09-sysupgrade.bin`。
+
+`luci-app-online-upgrade` 的 `firmware_pattern` 与 `docs/index.html` 的产物解析均按此规范实现，详见 [`Scripts/OnlineUpgradePreset.sh`](Scripts/OnlineUpgradePreset.sh) 与 [`docs/index.html`](docs/index.html)。
 
 ---
 

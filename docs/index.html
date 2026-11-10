@@ -16,7 +16,7 @@
   </script>
 
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>OpenWRT-CI · 高性能 5G CPE & 路由器定制固件工坊</title>
   <meta name="description" content="基于 ImmortalWrt 深度定制 · 专为 Hiveton H5000M 5G CPE、AirPi AP3000M 与通用 X86_64 打造。支持 NetWiz 智能向导、MT5700 / FM350-GL 5G 模组、多网络智能切换与温控。">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230284c7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><rect width='20' height='8' x='2' y='14' rx='2'/><path d='M6 18h.01'/><path d='M10 18h.01'/><path d='M15 10v4'/><path d='M17.8 7.2a6 6 0 0 0-7.6 0'/><path d='M20.6 4.4a10 10 0 0 0-13.2 0'/></svg>" type="image/svg+xml">
@@ -1468,7 +1468,311 @@
       padding: 0 4px;
     }
 
-  </style>
+  /* ============================================================
+   Phase 3 移动端落地补丁 · B = openwrtci.html (OpenWRT-CI, main:/docs)
+   注入位置：本文件最后一个 style 结束标签之前，新建【独立】块，
+             【必须】排在现有 @media (max-width:767px) 块（1438-1459）之后，
+             不要插进现有 @media (max-width:640px) 块（1381-1388）内部。
+   约束：全部规则包在 max-width:640px 内 -> >=641px 零影响（768 零改动）；
+         仅 640 / 360 两个宽度断点；纯 CSS，幂等，自包含。
+   注意：767 块排在 640 块之后会覆盖同名类，冲突选择器一律提高
+         特异性（如 .tutorial-tabs .tut-tab-btn / .container .stat-bar）。
+   ============================================================ */
+
+@media (max-width: 640px) {
+
+  /* ---- 1. 兜底与安全区（B 原 body 已有 overflow-x:hidden，此处显式保留） ---- */
+  body {
+    overflow-x: hidden;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* ---- 2. 顶栏 56px / 隐藏 nav-links ---- */
+  .nav-inner { min-height: 56px !important; }
+  header .nav-links { display: none !important; }
+  #opacitySwitcher { display: none !important; }
+  .nav-actions { gap: 8px !important; }
+
+  /* ---- 3. 字号阶梯（Phase 1） ---- */
+  .hero-title, h1 {
+    font-size: clamp(26px, 7vw, 34px) !important;
+    line-height: 1.25 !important;
+  }
+  .section-title, h2 {
+    font-size: clamp(20px, 5.2vw, 24px) !important;
+    line-height: 1.3 !important;
+  }
+  h3, h4 {
+    font-size: clamp(16px, 4.2vw, 18px) !important;
+  }
+  .hero-desc, .section-desc {
+    font-size: clamp(14px, 3.8vw, 16px) !important;
+  }
+
+  /* ---- 4. 中文断行（弃 break-all，balance，隐藏标题硬 br） ---- */
+  h1, h2, h3 {
+    word-break: normal !important;
+    line-break: strict;
+    overflow-wrap: break-word;
+    text-wrap: balance;
+  }
+  /* 只隐藏标题内硬 br；教程正文里的 <br>（2617/2641/2642）保持不变 */
+  h1 br, h2 br { display: none !important; }
+  .nowrap { white-space: nowrap !important; }
+  p, li, td, th, span {
+    word-break: normal !important;
+    overflow-wrap: break-word;
+  }
+
+  /* ---- 5. 正文阅读宽度（min(32ch,100%) / 左对齐 / 1.6） ---- */
+  .hero-desc, .section-desc {
+    max-width: min(32ch, 100%) !important;
+    margin-left: 0 !important;
+    margin-right: auto !important;
+    text-align: left !important;
+    line-height: 1.6 !important;
+  }
+  .hero-badge {
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    font-size: 12px !important;
+    line-height: 1.4 !important;
+    white-space: normal !important;
+  }
+
+  /* ---- 6. 首屏：CTA 2+1 网格（B 已有 .hero-cta 类，直接接管） ---- */
+  .hero-capsule .hero-cta {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    align-items: stretch !important;
+    justify-content: stretch !important;
+    gap: 12px !important;
+    margin-bottom: 20px !important;
+  }
+  .hero-capsule .hero-cta > a {
+    min-width: 0 !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important;
+    white-space: normal !important;
+    font-size: 14px !important;
+  }
+  .hero-capsule .hero-cta > a:first-child {
+    grid-column: 1 / -1 !important;
+    min-height: 48px !important;
+  }
+  .hero-capsule .hero-cta > a:not(:first-child) {
+    min-height: 44px !important;
+  }
+
+  /* ---- 7. 首屏：统计卡改单行横滚 + scroll-snap（提高特异性对抗 820 块） ---- */
+  .container .stat-bar {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    gap: 12px !important;
+    max-width: 100%;
+    min-width: 0;
+    padding-bottom: 6px;
+    margin-bottom: 20px !important;
+  }
+  .container .stat-bar > .stat-card {
+    flex: 0 0 min(72vw, 260px) !important;
+    min-width: 0;
+    scroll-snap-align: start;
+    padding: 16px !important;
+  }
+
+  /* ---- 8. 筛选 chip 2 列网格（只命中直接含 .chip 的组） ---- */
+  .filter-group:has(> .chip) {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    gap: 12px !important;
+  }
+  .filter-group:has(> .chip) > .chip {
+    min-width: 0 !important;
+    max-width: 100%;
+    box-sizing: border-box !important;
+    white-space: normal !important;
+    text-align: center;
+    line-height: 1.35;
+  }
+  .segmented-control .segment-btn {
+    white-space: normal !important;
+    font-size: 12px !important;
+    min-height: 44px !important;
+  }
+
+  /* ---- 9. 溢出与横向滚动容器 ---- */
+  div[style*="overflow-x:auto"],
+  div[class*="overflow-x-auto"] {
+    max-width: 100% !important;
+    min-width: 0;
+    overflow-x: auto !important;
+    overscroll-behavior-x: contain;
+  }
+  /* 横向 Tab：scroll-snap + 右侧渐隐提示。
+     底色用 background-color（非 background 简写），保证 background-image
+     渐隐提示不被擦除；提高特异性对抗 767px 块。 */
+  .tutorial-tabs {
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    max-width: 100%;
+    min-width: 0;
+    background-color: #f1f5f9 !important;
+    background-image: linear-gradient(90deg,
+        rgba(241, 245, 249, 0) calc(100% - 26px),
+        rgba(241, 245, 249, 0.96) 100%) !important;
+  }
+  .tutorial-tabs .tut-tab-btn {
+    scroll-snap-align: start;
+    min-height: 44px !important;
+    min-width: 44px !important;
+    max-width: 100%;
+    box-sizing: border-box !important;
+  }
+  .tut-scroll-hint {
+    font-size: 12px !important;
+    line-height: 1.4;
+  }
+  code, pre {
+    overflow-wrap: anywhere !important;
+    word-break: normal !important;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  pre { white-space: pre-wrap !important; }
+
+  /* ---- 10. 触控目标 >=44px / 输入 16px / range 44px 热区 ---- */
+  .btn, .btn-sm, .btn-icon,
+  .chip,
+  .segment-btn,
+  .copy-btn,
+  .brand-logo,
+  .tutorial-tabs .tut-tab-btn,
+  .mobile-menu-btn,
+  .floating-btn,
+  a[href="#downloads"][class*="btn"],
+  footer a {
+    min-height: 44px !important;
+    min-width: 44px !important;
+    max-width: 100%;
+    box-sizing: border-box !important;
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 句内纯文字链：inline 元素上 min-height 无效，用 padding 扩大热区；
+     不改 display，避免覆盖任何响应式 display:none。 */
+  a[class*="underline"]:not([class*="rounded"]),
+  a:not([class]) {
+    padding-top: 15px !important;
+    padding-bottom: 15px !important;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+    min-height: 44px !important;
+    min-width: 44px !important;
+    box-sizing: border-box !important;
+  }
+  input:not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px !important;
+    min-height: 44px !important;
+    max-width: 100%;
+    box-sizing: border-box !important;
+  }
+  .search-input-box input { font-size: 16px !important; }
+  input[type="range"] {
+    min-height: 44px !important;
+    padding-top: 18px !important;
+    padding-bottom: 18px !important;
+    box-sizing: border-box !important;
+    background-clip: content-box !important;
+    -webkit-background-clip: content-box !important;
+    touch-action: pan-y;
+  }
+
+  /* ---- 11. <=10px 小字提到 12px（滑块刻度 / "4 Tabs"） ---- */
+  [style*="font-size:10px"],
+  [class*="text-[10px]"] {
+    font-size: 12px !important;
+  }
+
+  /* ---- 12. 卡片/区块间距（卡片 16 / 区块 20 / 组 12） ---- */
+  .hero-capsule { padding: 20px 16px !important; }
+  .fw-card, .device-card, .feat-card, .spec-item-card, .tut-content-box {
+    padding: 16px !important;
+  }
+
+  /* ---- 13. 毛玻璃 blur 12px ----
+     注意：刻意【不】覆盖 .md-card / .chip 的 background-color，
+     B 的 opacitySlider 通过 --md-sys-color-card / --md-sys-color-surface
+     变量动态调节透光度，此处加 !important 会打断该 JS；
+     背景相关一律只用 background-color 非简写（见 .tutorial-tabs）。 */
+  .md-card {
+    backdrop-filter: blur(12px) saturate(150%) !important;
+    -webkit-backdrop-filter: blur(12px) saturate(150%) !important;
+  }
+
+  /* ---- 14. 锚点 / 浮动工具避让 / a11y ---- */
+  #downloads {
+    scroll-margin-top: calc(64px + env(safe-area-inset-top));
+  }
+  .wallpaper-control-panel {
+    top: calc(68px + env(safe-area-inset-top)) !important;
+    max-height: calc(100dvh - 80px - env(safe-area-inset-top));
+    overflow-y: auto;
+  }
+  .toast-container {
+    bottom: calc(20px + env(safe-area-inset-bottom)) !important;
+  }
+  a:focus-visible,
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  textarea:focus-visible,
+  [tabindex]:focus-visible {
+    outline: 2px solid #0284c7 !important;
+    outline-offset: 2px;
+  }
+}
+
+/* ---- 并列追加：降低动效（自带 640 条件，>=641 零影响） ---- */
+@media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---- 并列追加：横屏隐藏浮动工具 ---- */
+@media (max-width: 640px) and (orientation: landscape) {
+  .wallpaper-control-panel,
+  .toast-container { display: none !important; }
+}
+
+/* ---- 最后并列追加：360 单列降级 ---- */
+@media (max-width: 360px) {
+  .hero-capsule .hero-cta {
+    grid-template-columns: 1fr !important;
+  }
+  .hero-capsule .hero-cta > a:first-child {
+    grid-column: auto !important;
+  }
+  .filter-group:has(> .chip) {
+    grid-template-columns: 1fr !important;
+  }
+  .container .stat-bar > .stat-card {
+    flex-basis: min(86vw, 260px) !important;
+  }
+}
+</style>
 </head>
 <body>
 
@@ -1616,8 +1920,8 @@
         </div>
 
         <h1 class="hero-title">
-          高性能 5G CPE & 软路由<br>
-          <span class="gradient-text">OpenWRT 定制固件云端工坊</span>
+          <span class="nowrap">高性能</span> <span class="nowrap">5G CPE</span> & <span class="nowrap">软路由</span><br>
+          <span class="gradient-text">OpenWRT <span class="nowrap">定制固件</span><span class="nowrap">云端工坊</span></span>
         </h1>
 
         <p class="hero-desc">
@@ -1698,7 +2002,7 @@
         <span class="section-tag">FIRMWARE RELEASES</span>
         <h2 class="section-title">固件下载矩阵中心</h2>
         <p class="section-desc">
-          所有固件按产品与变体方案精准归类。直连本仓库 GitHub Releases，提供实时动态更新与高速下载节点。
+          所有固件按产品与变体方案精准归类，文件名统一为「机型-模组插件-编译日期-固件类型」。直连本仓库 GitHub Releases，提供实时动态更新与高速下载节点。
         </p>
       </div>
 
@@ -1717,7 +2021,7 @@
           <!-- Search Input -->
           <div class="search-input-box">
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            <input type="text" id="searchInput" placeholder="搜索固件名称、功能标签、格式...">
+            <input type="text" id="searchInput" placeholder="搜索机型、模组插件、编译日期、文件名...">
           </div>
         </div>
 
@@ -1728,7 +2032,9 @@
             <button class="chip active" data-filter-type="variant" data-value="ALL">全部方案</button>
             <button class="chip" data-filter-type="variant" data-value="NETWIZ">🌟 NetWiz 向导家族 (力荐)</button>
             <button class="chip" data-filter-type="variant" data-value="MT5700">⚡ MT5700 方案 (Rust轻量)</button>
+            <button class="chip" data-filter-type="variant" data-value="MT5700M">MT5700M 方案 A</button>
             <button class="chip" data-filter-type="variant" data-value="FM350">📡 FM350-GL 变体</button>
+            <button class="chip" data-filter-type="variant" data-value="SELFUSE">自用配置 (SelfUse)</button>
             <button class="chip" data-filter-type="variant" data-value="BASE">🔧 基础母配置</button>
           </div>
 
@@ -2150,13 +2456,13 @@
           variantLabel: 'NetWiz 家族 · MT5700',
           variantClass: 'fw-badge-netwiz',
           format: 'sysupgrade',
-          filename: 'H5000M-NetWiz-MT5700-sysupgrade.bin',
+          filename: `H5000M-NetWiz-MT5700-${tagDate}-sysupgrade.bin`,
           size: '58.4 MB',
           date: `20${tagDate.replace(/\./g, '-')}`,
           tag: `NetWiz-${tagDate}`,
           desc: '内置 NetWiz 网络向导 + MT5700 (Rust后端) 5G 模组驱动 + WiFi 7 双频 160MHz + 双温区温控',
           tags: ['NetWiz向导', '5G拨号', 'WiFi 7', 'PWM温控', '自愈守护', 'sysupgrade'],
-          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/NetWiz-${tagDate}/H5000M-NetWiz-MT5700-sysupgrade.bin`
+          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/NetWiz-${tagDate}/H5000M-NetWiz-MT5700-${tagDate}-sysupgrade.bin`
         },
         {
           id: 'h5000m-mt5700',
@@ -2166,13 +2472,13 @@
           variantLabel: 'MT5700 方案 B (轻量)',
           variantClass: 'fw-badge-mt',
           format: 'sysupgrade',
-          filename: 'H5000M-MT5700-sysupgrade.bin',
+          filename: `H5000M-MT5700-${tagDate}-sysupgrade.bin`,
           size: '56.2 MB',
           date: `20${tagDate.replace(/\./g, '-')}`,
           tag: `MT5700-${tagDate}`,
           desc: '母配置 + luci-app-mt5700 模组管理，Rust 极速后端，状态大屏，多网智能切换，推荐日常选用',
           tags: ['MT5700', 'Rust后端', 'WiFi 7', 'NetMode多网', 'sysupgrade'],
-          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/MT5700-${tagDate}/H5000M-MT5700-sysupgrade.bin`
+          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/MT5700-${tagDate}/H5000M-MT5700-${tagDate}-sysupgrade.bin`
         },
         {
           id: 'h5000m-fm350',
@@ -2182,13 +2488,13 @@
           variantLabel: 'Fibocom FM350-GL',
           variantClass: 'fw-badge-fm350',
           format: 'sysupgrade',
-          filename: 'H5000M-FM350-sysupgrade.bin',
+          filename: `H5000M-FM350-${tagDate}-sysupgrade.bin`,
           size: '57.8 MB',
           date: `20${tagDate.replace(/\./g, '-')}`,
           tag: `FM350-${tagDate}`,
           desc: '专为广和通 FM350-GL 5G 模组定制，走 RNDIS 纯净通道无内核冲突，满血 WiFi 7 吞吐',
           tags: ['FM350-GL', 'RNDIS通道', 'WiFi 7', 'PWM温控', 'sysupgrade'],
-          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/FM350-${tagDate}/H5000M-FM350-sysupgrade.bin`
+          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/FM350-${tagDate}/H5000M-FM350-${tagDate}-sysupgrade.bin`
         },
         {
           id: 'h5000m-base',
@@ -2198,13 +2504,13 @@
           variantLabel: '纯净基础母配置',
           variantClass: 'fw-badge-base',
           format: 'sysupgrade',
-          filename: 'H5000M-BASE-sysupgrade.bin',
+          filename: `H5000M-BASE-${tagDate}-sysupgrade.bin`,
           size: '53.1 MB',
           date: `20${tagDate.replace(/\./g, '-')}`,
           tag: `BASE-${tagDate}`,
           desc: '不含 5G 模组插件的基础高速固件，满血 WiFi 7，保留风扇温控与多网络智能切换组件',
           tags: ['基础母配置', 'WiFi 7', 'Tailscale', 'Samba4', 'sysupgrade'],
-          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/BASE-${tagDate}/H5000M-BASE-sysupgrade.bin`
+          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/BASE-${tagDate}/H5000M-BASE-${tagDate}-sysupgrade.bin`
         },
         {
           id: 'ap3000m-netwiz-mt5700',
@@ -2214,13 +2520,13 @@
           variantLabel: 'NetWiz 家族 · MT5700',
           variantClass: 'fw-badge-netwiz',
           format: 'sysupgrade',
-          filename: 'AP3000M-NetWiz-MT5700-sysupgrade.bin',
+          filename: `AP3000M-NetWiz-MT5700-${tagDate}-sysupgrade.bin`,
           size: '48.9 MB',
           date: `20${tagDate.replace(/\./g, '-')}`,
           tag: `NetWiz-${tagDate}`,
           desc: 'AirPi AP3000M 专属，内置 NetWiz 向导与 EEPROM 射频自愈，双频 WiFi 6 160MHz 满血发射',
           tags: ['NetWiz', 'EEPROM自愈', 'WiFi 6', 'airpi-fanctl', 'sysupgrade'],
-          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/NetWiz-${tagDate}/AP3000M-NetWiz-MT5700-sysupgrade.bin`
+          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/NetWiz-${tagDate}/AP3000M-NetWiz-MT5700-${tagDate}-sysupgrade.bin`
         },
         {
           id: 'ap3000m-factory',
@@ -2230,13 +2536,13 @@
           variantLabel: 'U-Boot 出厂直刷 / 救砖',
           variantClass: 'fw-badge-base',
           format: 'factory',
-          filename: 'AP3000M-factory.bin',
+          filename: `AP3000M-BASE-${tagDate}-factory.bin`,
           size: '46.7 MB',
           date: `20${tagDate.replace(/\./g, '-')}`,
           tag: `BASE-${tagDate}`,
           desc: 'AirPi AP3000M U-Boot 救砖底包，首次刷入写入真实 MAC 并恢复 factory 分区 28~29 dBm 射频',
           tags: ['Factory直刷', '救砖专用', 'EEPROM校准', 'factory'],
-          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/BASE-${tagDate}/AP3000M-factory.bin`
+          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/BASE-${tagDate}/AP3000M-BASE-${tagDate}-factory.bin`
         },
         {
           id: 'ap3000m-fm350',
@@ -2246,13 +2552,13 @@
           variantLabel: 'FM350-GL 模组方案',
           variantClass: 'fw-badge-fm350',
           format: 'sysupgrade',
-          filename: 'AP3000M-FM350-sysupgrade.bin',
+          filename: `AP3000M-FM350-${tagDate}-sysupgrade.bin`,
           size: '49.5 MB',
           date: `20${tagDate.replace(/\./g, '-')}`,
           tag: `FM350-${tagDate}`,
           desc: 'AP3000M 适配 FM350-GL 模组，免驱动冲突，内置 airpi-fanctl 智能风扇温控',
           tags: ['FM350', 'EEPROM修复', 'WiFi 6', 'sysupgrade'],
-          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/FM350-${tagDate}/AP3000M-FM350-sysupgrade.bin`
+          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/FM350-${tagDate}/AP3000M-FM350-${tagDate}-sysupgrade.bin`
         },
         {
           id: 'x86-netwiz-mt5700',
@@ -2262,13 +2568,13 @@
           variantLabel: 'NetWiz 家族 · Docker',
           variantClass: 'fw-badge-netwiz',
           format: 'x86-img',
-          filename: 'X86-NetWiz-MT5700-efi.img.gz',
+          filename: `X86-NetWiz-MT5700-${tagDate}-efi.img.gz`,
           size: '72.3 MB',
           date: `20${tagDate.replace(/\./g, '-')}`,
           tag: `NetWiz-${tagDate}`,
           desc: 'X86 软路由专用，集成 Docker 容器引擎与 NetWiz 网络向导，EFI 引导开箱即用',
           tags: ['Docker', 'NetWiz', 'EFI引导', 'x86-img', '硬件加解密'],
-          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/NetWiz-${tagDate}/X86-NetWiz-MT5700-efi.img.gz`
+          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/NetWiz-${tagDate}/X86-NetWiz-MT5700-${tagDate}-efi.img.gz`
         },
         {
           id: 'x86-base-grub',
@@ -2278,13 +2584,13 @@
           variantLabel: '传统 GRUB / 兼容镜像',
           variantClass: 'fw-badge-base',
           format: 'x86-img',
-          filename: 'X86-combined-squashfs.img.gz',
+          filename: `X86-BASE-${tagDate}-combined.img.gz`,
           size: '68.9 MB',
           date: `20${tagDate.replace(/\./g, '-')}`,
           tag: `BASE-${tagDate}`,
           desc: '通用 Legacy BIOS / GRUB 引导固件，支持 PVE / ESXi / 物理机，内置 Tailscale 与 Samba4',
           tags: ['GRUB引导', '软路由', 'Docker', 'x86-img'],
-          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/BASE-${tagDate}/X86-combined-squashfs.img.gz`
+          downloadUrl: `https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download/BASE-${tagDate}/X86-BASE-${tagDate}-combined.img.gz`
         }
       ];
     }
@@ -2369,7 +2675,7 @@
             <div class="fw-meta-row">
               <span>大小：<strong style="color:#0f172a;">${item.size}</strong></span>
               <span>版本：<strong style="color:#0f172a;">${item.tag}</strong></span>
-              <span>日期：<strong style="color:#0f172a;">${item.date}</strong></span>
+              <span>编译日期：<strong style="color:#0f172a;">${item.date}</strong></span>
             </div>
 
             <div class="fw-actions">
@@ -2380,6 +2686,10 @@
               <button class="btn btn-secondary btn-icon" onclick="copyText('${downloadLink}', '下载直链')" title="复制加速直链">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
               </button>
+              ${item.checksumUrl ? `<a href="${getAcceleratedUrl(item.checksumUrl)}" class="btn btn-secondary btn-sm" target="_blank" title="下载 SHA256 校验文件（sha256sum -c 核对完整性）">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+                SHA256
+              </a>` : ''}
             </div>
           </div>
         `;
@@ -2401,69 +2711,90 @@
 
         if (Array.isArray(releases) && releases.length > 0) {
           statusEl.textContent = `已连接 GitHub Releases (${releases.length} 个最新发版)`;
-          
+
           const parsedItems = [];
+          // 与 WRT-CORE.yml「整理并打包固件」的命名规范严格对应：
+          //   <机型>-<模组插件>-<编译日期>-<固件类型>.<扩展名>
+          // 日期段 YY.MM.DD 同时是 luci-app-online-upgrade 从资产名解析出的
+          // 版本号。只有匹配该规范的完整固件才进列表；Config / manifest /
+          // kernel / rootfs 分片 / 轮换前的旧格式资产一律跳过。
+          // SHA256 校验资产（sha256sums / <固件名>.sha256）结尾不是固件扩展名，
+          // 天然不匹配 FW_NAME_RE，不会误进卡片列表；下面单独收集它们的下载
+          // 链接挂到对应固件卡片上，方便下载后 sha256sum -c 核对完整性。
+          const FW_NAME_RE = /^(H5000M|AP3000M|X86)-([A-Za-z0-9-]+)-(\d{2}\.\d{2}\.\d{2})-([A-Za-z0-9-]+)\.(bin|img\.gz|img|iso|vmdk|gz)$/;
+          const DEVICE_NAMES = {
+            H5000M: 'Hiveton H5000M 5G CPE',
+            AP3000M: 'AirPi AP3000M 路由器',
+            X86: 'X86_64 软路由 / 工控机'
+          };
           releases.forEach(rel => {
             if (!rel.assets || rel.assets.length === 0) return;
+            // 每个固件一份 <固件名>.sha256，资产名唯一；标准 sha256sums 总表
+            // 作为兜底（同组多机型 job 可能只留下最后合并的一份）。
+            const checksumUrls = new Map();
+            let checksumTableUrl = '';
+            rel.assets.forEach(a => {
+              if (/\.sha256$/i.test(a.name)) {
+                checksumUrls.set(a.name.replace(/\.sha256$/i, ''), a.browser_download_url);
+              } else if (/^sha256sums(\.txt|\.sha256)?$/i.test(a.name)) {
+                checksumTableUrl = a.browser_download_url;
+              }
+            });
             rel.assets.forEach(asset => {
-              const name = asset.name;
-              if (name.endsWith('.manifest') || name.endsWith('.sha256') || name.endsWith('.md')) return;
-              
-              let device = 'X86';
-              let deviceName = 'X86_64 软路由';
-              if (name.includes('H5000M')) {
-                device = 'H5000M';
-                deviceName = 'Hiveton H5000M 5G CPE';
-              } else if (name.includes('AP3000M')) {
-                device = 'AP3000M';
-                deviceName = 'AirPi AP3000M 路由器';
-              }
+              const m = FW_NAME_RE.exec(asset.name);
+              if (!m) return;
+              const device = m[1], flavor = m[2], buildStamp = m[3], fwType = m[4];
+              const deviceName = DEVICE_NAMES[device] || device;
 
-              let variant = 'BASE';
-              let variantLabel = '基础母配置';
-              let variantClass = 'fw-badge-base';
-              if (name.includes('NetWiz')) {
+              // 模组插件段精确判定，不再靠 name.includes 猜，避免
+              // NetWiz-MT5700 被误判成 MT5700 方案
+              let variant = 'BASE', variantLabel = '基础母配置', variantClass = 'fw-badge-base';
+              if (/^NetWiz/i.test(flavor)) {
                 variant = 'NETWIZ';
-                variantLabel = 'NetWiz 向导';
+                variantLabel = `NetWiz 向导 · ${flavor.replace(/^NetWiz-?/i, '') || '标准版'}`;
                 variantClass = 'fw-badge-netwiz';
-              } else if (name.includes('MT5700M')) {
-                variant = 'MT5700M';
-                variantLabel = 'MT5700M 方案A';
-                variantClass = 'fw-badge-mt';
-              } else if (name.includes('MT5700')) {
-                variant = 'MT5700';
-                variantLabel = 'MT5700 方案B';
-                variantClass = 'fw-badge-mt';
-              } else if (name.includes('FM350')) {
-                variant = 'FM350';
-                variantLabel = 'FM350-GL 变体';
-                variantClass = 'fw-badge-fm350';
+              } else if (/^SelfUse$/i.test(flavor)) {
+                variant = 'SELFUSE'; variantLabel = '自用配置 (SelfUse)'; variantClass = 'fw-badge-base';
+              } else if (/^MT5700M$/i.test(flavor)) {
+                variant = 'MT5700M'; variantLabel = 'MT5700M 方案A'; variantClass = 'fw-badge-mt';
+              } else if (/^MT5700$/i.test(flavor)) {
+                variant = 'MT5700'; variantLabel = 'MT5700 方案B'; variantClass = 'fw-badge-mt';
+              } else if (/^FM350$/i.test(flavor)) {
+                variant = 'FM350'; variantLabel = 'FM350-GL 变体'; variantClass = 'fw-badge-fm350';
               }
 
-              let format = 'sysupgrade';
-              if (name.includes('factory')) format = 'factory';
-              if (name.includes('.img') || name.includes('efi')) format = 'x86-img';
+              let format = 'x86-img';
+              if (/sysupgrade/.test(fwType)) format = 'sysupgrade';
+              else if (/factory|initramfs|recovery/.test(fwType)) format = 'factory';
+
+              // 编译日期取自文件名（YY.MM.DD），比资产上传时间更贴近真实构建批次
+              const buildDate = `20${buildStamp.replace(/\./g, '-')}`;
 
               parsedItems.push({
                 id: asset.id.toString(),
-                device: device,
-                deviceName: deviceName,
-                variant: variant,
-                variantLabel: variantLabel,
-                variantClass: variantClass,
-                format: format,
-                filename: name,
+                device,
+                deviceName,
+                flavor,
+                variant,
+                variantLabel,
+                variantClass,
+                format,
+                filename: asset.name,
                 size: (asset.size / (1024 * 1024)).toFixed(1) + ' MB',
-                date: asset.updated_at.split('T')[0],
+                date: buildDate,
                 tag: rel.tag_name,
                 desc: rel.body ? rel.body.substring(0, 110) + '...' : `${deviceName} 云端编译自动发版固件`,
-                tags: [device, variant, format],
-                downloadUrl: asset.browser_download_url
+                tags: [device, flavor, fwType, buildStamp, variant],
+                downloadUrl: asset.browser_download_url,
+                checksumUrl: checksumUrls.get(asset.name) || checksumTableUrl || ''
               });
             });
           });
 
           if (parsedItems.length > 0) {
+            // 新固件在前：编译日期倒序，再按机型 / 文件名稳定排序
+            parsedItems.sort((a, b) => b.date.localeCompare(a.date) ||
+              a.device.localeCompare(b.device) || a.filename.localeCompare(b.filename));
             currentFirmwares = parsedItems;
             renderFirmwares();
           }
