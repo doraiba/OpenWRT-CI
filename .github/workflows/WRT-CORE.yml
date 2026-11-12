@@ -85,11 +85,31 @@ env:
   WRT_TEST: ${{inputs.WRT_TEST}}
   MT_MODE: ${{inputs.MT_MODE}}
   WRT_VARIANT: ${{inputs.WRT_VARIANT}}
+  # 在线升级（luci-app-online-upgrade）的出厂升级源仓库。
+  # 上游 Scripts/OnlineUpgradePreset.sh 的默认值是 LianXia233/OpenWRT-CI，
+  # 但本仓库的 Release 发在 doraiba/OpenWRT-CI：不改这一行，固件会去上游
+  # 仓库找同名资产，命中后装的就不是本仓库编的固件（自用变体的 SelfUse
+  # 资产在上游根本不存在，表现为「检查更新一直失败/更新到别人的包」）。
+  ONLINE_UPGRADE_SOURCE_REPO: doraiba/OpenWRT-CI
 
 jobs:
   core:
     name: 编译核心 · ${{inputs.WRT_SOURCE}}
-    runs-on: ubuntu-latest
+    # 钉 24.04，不用 ubuntu-latest：latest 正在往 26.04 灰度，同一时刻不同
+    # 任务会拿到不同镜像，结果不可预测。2026-11-12 实测：上游 43139551713 那次
+    # 落到 ubuntu-24.04（ubuntu24/20261101.360）能编译，本仓库 43150389373 落到
+    # ubuntu-26.04（ubuntu26/20261101.186），被 immortalwrt 的
+    # init_build_environment.sh 直接拒绝：
+    #   [ERROR] Unsupported OS, use Ubuntu 20.04 instead.
+    # 该脚本只认 bionic/focal/jammy/noble/trixie 等代号，「初始化编译环境」
+    # 整步失败，后面 30 多个步骤全部 skipped，等于白等。
+    #
+    # 选 noble(24.04) 而非 jammy(22.04)：工具链缓存 wrt-tc-* 里的 host 工具按
+    # glibc 2.38+ 链接，而缓存键只含源码/feed 哈希、不含镜像版本；换到 22.04
+    # （glibc 2.35）会命中这份旧缓存并报 `find: version 'GLIBC_2.38' not found`，
+    # 包信息扫描失败后 make defconfig 会把 luci-app-mt5700 等自定义符号当孤立
+    # 符号丢弃。
+    runs-on: ubuntu-24.04
     # 略低于平台 6h 硬上限：被硬上限杀掉时 runner 直接终止，
     # 缓存的 post 保存步骤会被整段跳过，下次必然冷编译。
     timeout-minutes: 345
@@ -1572,7 +1592,7 @@ jobs:
           | `MT5700` | 普通 MT5700 模组方案（方案 B，单包内置 Rust 后端，仅非 NetWiz 产品） |
           | `MT5700M` | 普通 MT5700M 模组方案（方案 A，含短信与 AT 守护，仅非 NetWiz 产品） |
           | `FM350` | 普通 Fibocom FM350-GL 模组管理（RNDIS 数据通道，仅非 NetWiz 产品） |
-          | `自用` | 个人自用配置（H5000M + NetMonitor 网络监控 + Taygedo 签到，MT5700 方案，不进入公开 MT5700 分类） |
+          | `自用` | 个人自用配置（H5000M + NetMonitor 网络监控 + Podman 容器，MT5700 方案，不进入公开 MT5700 分类） |
           | `BASE` | 无变体基础构建（手动触发） |
 
           ## ⚙️ 默认出厂参数
