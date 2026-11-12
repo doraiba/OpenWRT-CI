@@ -61,6 +61,12 @@ CONFIG_PACKAGE_ucode-mod-uci=y
 CONFIG_PACKAGE_ucode-mod-ubus=y
 CONFIG_PACKAGE_ucode-mod-uloop=y
 
+# ===== CA 证书库 =====
+# ca-bundle 在 Config/GENERAL.txt 中被注释，但多个联网插件（homeproxy /
+# easytier / 订阅更新等）运行期需要系统 CA；此处显式选中，避免依赖链变动时
+# 静默缺包导致 TLS 校验失败。
+CONFIG_PACKAGE_ca-bundle=y
+
 # ===== luci-app-taygedo：塔吉多自动签到（自用）=====
 #
 # 包来源：https://github.com/LianXia233/taygedo-CI（分支 main）。
@@ -80,7 +86,6 @@ CONFIG_PACKAGE_ucode-mod-uloop=y
 #
 # DEPENDS: +ca-bundle +luci-base +curl（luci-base 已在 GENERAL.txt 选中；
 # ca-bundle 在 GENERAL.txt 中被注释，故此处显式选中）。
-CONFIG_PACKAGE_ca-bundle=y
 #
 # 本仓库**不使用**这个插件，故不开启它（整段说明保留，供以后要用时参考）。
 # 若要启用：先把 taygedo-rs 默认的 0.0.0.0:8787 换掉 —— 该端口与
