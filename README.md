@@ -271,9 +271,11 @@ OpenWRT-CI/
 ├── AP3000M-EEPROM/           # AP3000M 射频恢复与校准脚本套件
 ├── Scripts/                  # 编译生命周期钩子脚本
 │   ├── Packages.sh           # 第三方源码 Feed 拉取与版本锁定
+│   ├── Packages-FM350.sh / Packages-NetWiz.sh / Packages-NetMonitor.sh
 │   ├── ApplyMTMode.sh        # MT 模组方案注入与配置组装
 │   ├── VerifyMTMode.sh       # 编译前驱动冲突语义安全拦截
 │   ├── Handles.sh            # 静态补丁应用与组件冲突修复
+│   ├── PatchRebase.py        # 客制补丁上下文随上游漂移自动重定基
 │   ├── podman/98-podman-network # Podman 容器网络首次开机初始化
 │   ├── podman/98-podman-storage # Podman 存储根移出 tmpfs，重启不丢镜像
 │   └── Settings.sh           # 出厂默认 IP / Wi-Fi 编译期注入
