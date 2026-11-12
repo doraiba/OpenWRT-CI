@@ -14,6 +14,10 @@
 # 不再与 NETMONITOR 变体绑定。两个包的取包逻辑差异较大（taygedo 需要做
 # Release 资产名解析与版本对齐），合在一起只会让分支互相牵连，故拆分。
 #
+# 本仓库**不使用** taygedo，故配置里不开启它。若要启用，得先给 taygedo-rs
+# 换掉默认的 0.0.0.0:8787 —— 与 H5000M-EXTRA.txt 选中的 luci-app-bandix-plus
+# API 端口相同，不改会让 bandix-plus 开机 bind 失败并进入 procd crash loop。
+#
 # 用法（在 OpenWrt 源码树的 package/ 目录下执行）：
 #   $GITHUB_WORKSPACE/Scripts/Packages-NetMonitor.sh
 
