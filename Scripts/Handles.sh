@@ -295,6 +295,25 @@ if [ -d "$PKG_PATH/luci-app-mini-diskmanager" ]; then
 	fi
 fi
 
+#luci-app-h5000m-fancontrol 曲线点编辑器修正
+# 原版把编辑器结果固定写进 curve_custom，而控制器只读 CURVE_OPTION[curve] 指向的
+# 那一条：选 Balanced/Quiet 时拖点、保存都不生效，界面却显示已改；且首次进入
+# 「Fan curve」页编辑器是空列表（editorFromSpec 只被两个「恢复默认」按钮调用）。
+# 补丁让编辑器编辑当前选中的档案、切档案时刷新，并拒绝写空曲线（空曲线会触发
+# failsafe 全速）。只改前端 JS，不动 Rust 控制器与 UCI 结构。
+if [ -d "$PKG_PATH/luci-app-h5000m-fancontrol" ]; then
+	echo " "
+	FANCTL_PATCHER="$GITHUB_WORKSPACE/Scripts/patches/fancontrol-curve-editor.py"
+	if [ -f "$FANCTL_PATCHER" ]; then
+		# 上游若改了这段前端，脚本会非零退出，让构建在导入插件阶段就失败，
+		# 而不是静默装回一个「改了不生效」的界面。
+		python3 "$FANCTL_PATCHER" "$PKG_PATH/luci-app-h5000m-fancontrol"
+		echo "h5000m-fancontrol curve editor patched!"
+	else
+		echo "WARNING: $FANCTL_PATCHER not found; 曲线点编辑器仍会只写 curve_custom" >&2
+	fi
+fi
+
 #修复TailScale配置文件冲突
 FEEDS_PACKAGES="$PKG_PATH/../feeds/packages"
 TS_FILE="$(find "$FEEDS_PACKAGES" -maxdepth 3 -type f -wholename '*/tailscale/Makefile' -print -quit 2>/dev/null)"
