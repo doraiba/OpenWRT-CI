@@ -149,6 +149,24 @@ case "${WRT_CONFIG:-}" in
 H5000M*) INSTALL_OPENAPPFILTER ;;
 esac
 
+# ===== luci-app-podman（Podman 容器管理前端，仅 H5000M 自用配置）=====
+# 符号写在 Config/H5000M-WIFI-YES-NETMONITOR.txt；取包同样只在 WRT_CONFIG 含
+# NETMONITOR 时执行，其它机型 / 变体的 package/ 树里不会多出该包。
+#
+# 上游 Zerogiven-OpenWRT-Packages/luci-app-podman 根目录即包（Makefile 在根，
+# PKG_NAME=luci-app-podman），clone 到 package/luci-app-podman 就是标准 LuCI 包
+# 目录，无需搬移或重命名。
+#
+# 后端 podman 由 packages feed 的 utils/podman 提供，本仓库只导入前端；前端
+# Makefile 把 podman 写在 PKG_BUILD_DEPENDS（构建期依赖）而非 LUCI_DEPENDS，
+# 所以配置层必须显式选中 CONFIG_PACKAGE_podman，否则只会装一个点不开的空界面。
+case "${WRT_CONFIG:-}" in
+*NETMONITOR*)
+	rm -rf ./luci-app-podman
+	UPDATE_PACKAGE "luci-app-podman" "Zerogiven-OpenWRT-Packages/luci-app-podman" "main"
+	;;
+esac
+
 UPDATE_PACKAGE "ddns-go" "sirpdboy/luci-app-ddns-go" "main"
 UPDATE_PACKAGE "diskman" "sbwml/luci-app-diskman" "main"
 UPDATE_PACKAGE "diskmanager" "4IceG/luci-app-mini-diskmanager" "main"

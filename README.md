@@ -49,7 +49,7 @@
 | `*-NETWIZ-MT5700M` | H5000M / AP3000M / X86 | 母配置 **+ `luci-app-netwiz`** + MT5700M 方案 | `MT5700M` | 初学新手、向导式配网 + 5G（经典方案 A） |
 | `*-NETWIZ-FM350` | H5000M / AP3000M / X86 | 母配置 **+ `luci-app-netwiz`** + FM350 方案 | 无 (留空) | 初学新手、向导式配网 + FM350 模组 |
 | **自用配置** | | | | |
-| `H5000M-WIFI-YES-NETMONITOR` | H5000M | 母配置 + 网络监控 `netmonitor` + 每日签到 `taygedo` | `MT5700`（固定） | 作者个人测试使用，独立归组 |
+| `H5000M-WIFI-YES-NETMONITOR` | H5000M | 母配置 + 网络监控 `netmonitor` + 容器 `podman` | `MT5700`（固定） | 作者个人测试使用，独立归组 |
 
 > \* 注：基础母配置本身不捆绑特定模组插件，编译时通过 **MT Mode** 下拉选项（`MT5700M` / `MT5700` / `NONE`）按需动态叠加。
 
@@ -66,6 +66,7 @@
 | 在线升级 `online-upgrade` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | 多网口流量监控 `bandix-plus`（H5000M 专属） | H5000M | H5000M | H5000M | H5000M | H5000M | ✅ |
 | 应用过滤 `oaf`（家长控制，H5000M 专属） | H5000M | H5000M | H5000M | H5000M | H5000M | ✅ |
+| Podman 容器 `podman` | — | — | — | — | — | ✅ |
 | 每日签到 `taygedo`（配置驱动，本仓库默认未开启） | 🟡 可选 | 🟡 可选 | 🟡 可选 | 🟡 可选 | 🟡 可选 | ✅ |
 | 硬件风扇温控 `h5000m/airpi-fancontrol` | H5000M / AP3000M | 包含 | 包含 | 包含 | 包含 | 包含 |
 
@@ -187,6 +188,7 @@
 
 - 📊 **多网口流量监控 Bandix Plus**：按接口 / 应用统计吞吐，BPF 内核采集，自带 Web 面板与 TCX 限速；
 - 👨‍👩‍👧 **家长控制 OpenAppFilter（OAF）**：`kmod-oaf` + `appfilter` + `luci-app-oaf`，按应用 / MAC 过滤，含上网记录、白名单与实时连接视图（DPI 依赖 netfilter 钩子，与硬件加速互斥）；
+- 📦 **Podman 容器**（仅 `H5000M-WIFI-YES-NETMONITOR`）：`luci-app-podman` + `podman`，容器 / 镜像 / 卷 / 网络 / Pod 全量管理；首次开机自动把 netavark 防火墙驱动切到 nftables（本固件无 iptables 二进制）、与 dnsmasq 错开 `10.88.0.1:53`、给 `podman0` 建独立 fw4 zone 并放行 `lan ↔ podman` 与 `podman → wan`，开箱即可创建容器、容器能出网、局域网可直接访问 `-p` 映射端口。
 
 ---
 
@@ -254,6 +256,7 @@ OpenWRT-CI/
 │   ├── *-MT-AUTO.yml         # MT 方案定时构建发版
 │   ├── FM350-AUTO.yml        # FM350 变体定时构建
 │   ├── NetWiz-AUTO.yml       # NetWiz 家族定时构建
+│   ├── H5000M-NETMONITOR-AUTO.yml # 自用配置定时构建（NetMonitor + Podman）
 │   ├── Auto-Clean.yml        # 历史制品轮换与清理
 │   └── Cache-Clean.yml       # Actions 缓存回收
 ├── Config/                   # 模块化 Kconfig 配置文件片段
@@ -264,12 +267,15 @@ OpenWRT-CI/
 │   ├── *-FM350.txt           # 各机型 FM350 变体配置
 │   ├── *-NETWIZ-*.txt        # NetWiz 组合变体配置
 │   ├── H5000M-EXTRA.txt      # H5000M 专属插件层（Bandix Plus / OpenAppFilter）
+│   └── H5000M-WIFI-YES-NETMONITOR.txt # 自用配置（netmonitor + podman）
 ├── AP3000M-EEPROM/           # AP3000M 射频恢复与校准脚本套件
 ├── Scripts/                  # 编译生命周期钩子脚本
 │   ├── Packages.sh           # 第三方源码 Feed 拉取与版本锁定
 │   ├── ApplyMTMode.sh        # MT 模组方案注入与配置组装
 │   ├── VerifyMTMode.sh       # 编译前驱动冲突语义安全拦截
 │   ├── Handles.sh            # 静态补丁应用与组件冲突修复
+│   ├── podman/98-podman-network # Podman 容器网络首次开机初始化
+│   ├── podman/98-podman-storage # Podman 存储根移出 tmpfs，重启不丢镜像
 │   └── Settings.sh           # 出厂默认 IP / Wi-Fi 编译期注入
 ├── docs/                     # GitHub Pages 静态落地页源码
 └── README.md                 # 固件说明文档
