@@ -619,9 +619,11 @@ jobs:
       # 符号，会被连依赖一起丢弃，结果是「编译全绿、固件里没有这个插件」。
       #
       # luci-app-netmonitor 的 Makefile include feeds/luci/luci.mk（走 LuCI
-      # feed 编译框架），故还必须晚于「更新 feeds 软件源」步骤。
+      # feed 编译框架），故还必须晚于「更新 feeds 软件源」步骤；当前位置已满足。
       #
       # 注：luci-app-taygedo 已从这里剥离，改由下方独立的配置驱动步骤导入。
+      # 本仓库不使用该插件，配置里不开启它；若要启用，需先把它默认的
+      # 0.0.0.0:8787 换掉 —— 与 luci-app-bandix-plus 的 API 端口相同。
       - name: 导入 luci-app-netmonitor（H5000M 自用变体）
         if: contains(env.WRT_CONFIG, 'NETMONITOR')
         run: |
