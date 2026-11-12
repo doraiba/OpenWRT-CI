@@ -254,15 +254,35 @@ def find_source_tar(wrt, pkg_rel):
     return sorted(glob.glob(os.path.join(wrt, "dl", name + "-*.tar.*")))
 
 
-def apply_dry_run(srcroot, patch_path, timeout=300):
+def _run_patch(srcroot, patch_path, dry_run, timeout=300):
+    cmd = ["patch", "-p1", "--forward"]
+    if dry_run:
+        cmd.append("--dry-run")
+    cmd += ["-i", os.path.abspath(patch_path)]
     r = subprocess.run(
-        ["patch", "-p1", "--dry-run", "--forward", "-i", os.path.abspath(patch_path)],
+        cmd,
         cwd=srcroot,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         timeout=timeout,
     )
     return r.returncode == 0, r.stdout.decode("utf-8", "replace")
+
+
+def apply_dry_run(srcroot, patch_path, timeout=300):
+    return _run_patch(srcroot, patch_path, True, timeout)
+
+
+def apply_patch(srcroot, patch_path, timeout=300):
+    """真正把补丁打到 srcroot 上。
+
+    必须这么做：buildroot 的 prepare 是顺序累进打补丁的，后面的补丁可能依赖
+    前面的结果。firewall4 就是典型——001-add-bridge-flowtable-support 引入
+    `resolve_bridge_devices`，004-scope-bridge-flowtable-offload 在此基础上改。
+    若每个补丁都对着原始源码 dry-run，004 永远找不到那段函数，会被误判为
+    「上游源码漂移」而中止构建。
+    """
+    return _run_patch(srcroot, patch_path, False, timeout)
 
 
 def touch_build_dir(wrt, pkg_rel):
@@ -301,9 +321,15 @@ def process(wrt, pkg_rel, handle_all):
         for p in patches:
             ok, out = apply_dry_run(srcroot, p)
             if ok:
-                if not handle_all:
-                    continue
-                print("[ok] %s 可原样应用" % os.path.basename(p))
+                if handle_all:
+                    print("[ok] %s 可原样应用" % os.path.basename(p))
+                ok_a, out_a = apply_patch(srcroot, p)
+                if not ok_a:
+                    print(
+                        "[fail] %s 试打通过但落盘失败：\n%s"
+                        % (os.path.basename(p), out_a.strip()[-800:])
+                    )
+                    return 1
                 continue
 
             print("[warn] %s 无法原样应用，尝试重建上下文" % os.path.basename(p))
@@ -351,6 +377,14 @@ def process(wrt, pkg_rel, handle_all):
                 fh.write(new_text)
             changed.append(os.path.basename(p))
             print("[done] %s 已重写" % os.path.basename(p))
+
+            ok_a, out_a = apply_patch(srcroot, p)
+            if not ok_a:
+                print(
+                    "[fail] %s 重写后落盘失败：\n%s"
+                    % (os.path.basename(p), out_a.strip()[-800:])
+                )
+                return 1
 
         if changed:
             touch_build_dir(wrt, pkg_rel)

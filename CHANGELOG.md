@@ -1,4 +1,30 @@
 # 更新日志
+## [2026-11-12] 修正 PatchRebase：客制补丁改为顺序累进应用
+
+CI 第 31 步「校正客制补丁上下文」在本仓库与上游同时失败，根因不是上游源码漂移，
+而是 `Scripts/PatchRebase.py` 的模型缺陷：它对每个补丁都在**原始**解包目录上
+`patch --dry-run`，试打通过的补丁从不真正写入源码树。
+
+buildroot 的 `prepare` 是顺序累进的：`firewall4` 的
+`001-add-bridge-flowtable-support` 引入 `resolve_bridge_devices`，
+`004-scope-bridge-flowtable-offload` 在此基础上改。004 永远看不到那段函数，
+于是被判成「漂移」→ 重建失败 → 整步非零退出，后续 20 多步全部 skipped。
+
+报错（运行 `43150852580`，上游 `43139551713` 同款）：
+
+```
+Hunk #1 FAILED at 493.  Hunk #2 FAILED at 508.  2 out of 2 hunks FAILED
+Hunk #1 FAILED at 653.  Hunk #2 succeeded at 2147 (offset -61 lines).
+保持原补丁不变，请人工检查 004-scope-bridge-flowtable-offload.patch
+```
+
+- `Scripts/PatchRebase.py`：抽出 `_run_patch()` 并新增 `apply_patch()`；试打通过的
+  补丁立即落盘，后续补丁才能看到前序结果；重建成功的补丁写回后同样落盘，避免
+  「修好了却没打上」；
+- 验证（`openwrt/firewall4` 3722eadc + owrt 分支 7 个补丁）：修改前完整复现上述
+  报错并 `exit 1`，修改后 7 个补丁全部原样应用、`[info] 无需改动`、`exit 0`；
+  `--all` 模式逐条打印 `[ok]`，同样 `exit 0`。
+
 ## [2026-11-12] 修正风扇曲线点编辑器：编辑当前档案，而非写入不生效的 curve_custom
 
 ### 背景
