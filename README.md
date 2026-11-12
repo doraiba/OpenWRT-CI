@@ -64,6 +64,8 @@
 | NetWiz 配网向导 `netwiz` | — | — | ✅ | ✅ | ✅ | — |
 | 网络监控 `netmonitor` | — | — | — | — | — | ✅ |
 | 在线升级 `online-upgrade` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 多网口流量监控 `bandix-plus`（H5000M 专属） | H5000M | H5000M | H5000M | H5000M | H5000M | ✅ |
+| 应用过滤 `oaf`（家长控制，H5000M 专属） | H5000M | H5000M | H5000M | H5000M | H5000M | ✅ |
 | 每日签到 `taygedo`（配置驱动，本仓库默认未开启） | 🟡 可选 | 🟡 可选 | 🟡 可选 | 🟡 可选 | 🟡 可选 | ✅ |
 | 硬件风扇温控 `h5000m/airpi-fancontrol` | H5000M / AP3000M | 包含 | 包含 | 包含 | 包含 | 包含 |
 
@@ -181,8 +183,10 @@
 
 ### 3. NetWiz 向导式网络管家 (`luci-app-netwiz`)
 
-- **一步一景向导**：提供图形化配置网络流程，降低家庭/企业初次入网难度；
-- **三层容灾自愈**：内置 `netwiz-monitor` 巡检、`netwiz-recovery` 自愈与 `netwiz-watchdog` 状态看门狗。
+### 4. 自用扩展插件（H5000M 专属层 `Config/H5000M-EXTRA.txt`）
+
+- 📊 **多网口流量监控 Bandix Plus**：按接口 / 应用统计吞吐，BPF 内核采集，自带 Web 面板与 TCX 限速；
+- 👨‍👩‍👧 **家长控制 OpenAppFilter（OAF）**：`kmod-oaf` + `appfilter` + `luci-app-oaf`，按应用 / MAC 过滤，含上网记录、白名单与实时连接视图（DPI 依赖 netfilter 钩子，与硬件加速互斥）；
 
 ---
 
@@ -258,7 +262,8 @@ OpenWRT-CI/
 │   ├── MT5700.txt / MT5700M.txt       # 模组管理方案 A/B 独立包定义
 │   ├── H5000M-WIFI-YES.txt / AP3000M.txt / X86.txt # 硬件机型基础母配置
 │   ├── *-FM350.txt           # 各机型 FM350 变体配置
-│   └── *-NETWIZ-*.txt        # NetWiz 组合变体配置
+│   ├── *-NETWIZ-*.txt        # NetWiz 组合变体配置
+│   ├── H5000M-EXTRA.txt      # H5000M 专属插件层（Bandix Plus / OpenAppFilter）
 ├── AP3000M-EEPROM/           # AP3000M 射频恢复与校准脚本套件
 ├── Scripts/                  # 编译生命周期钩子脚本
 │   ├── Packages.sh           # 第三方源码 Feed 拉取与版本锁定
