@@ -87,6 +87,46 @@
 - X86 仍依赖预设规则：x86/64 镜像的 `board_name` / `model` 为 `generic`，属于插件的非身份词表，结构化机型比对必然 `unmatched`；架构段只能确认架构，选对 `efi.img.gz` 还需要预设里的规则（本仓库产出的固件自带预设）。
 - 已发布的旧 Release 资产名不变；插件按 `latest` 取新 Tag 时自动用上新命名。
 
+### 本仓库同步（`doraiba/OpenWRT-CI`）
+
+- 本次整份采纳上游 `78f7862`：`WRT-CORE.yml` 与 `README.md` 自动合并，`OnlineUpgradePreset.sh`、
+  `docs/index.html` 直接取上游；`CHANGELOG.md` 双方条目按时间倒序并入。
+- 自用变体产物名由 `H5000M-SelfUse-26.11.10-sysupgrade.bin` 变为
+  `H5000M-SelfUse-aarch64-26.11.11-sysupgrade.bin`。
+- 顶层 env 的 `ONLINE_UPGRADE_SOURCE_REPO: doraiba/OpenWRT-CI` 保持不变——架构段只解决
+  「插件认不认这份资产」，资产从哪个仓库取仍由本仓库决定。
+- 风扇 90 档（`h5fan-level-90`）及其构建断言、`Config/H5000M-EXTRA.txt` 的 bandix / oaf
+  插件层均未受影响。
+
+## [2026-11-10] 补齐上游剩余提交：产物统一命名 + SHA256 校验资产
+
+接 11-09 那次同步（`93a33a4..7441952`）继续跟进，并入 `7441952..61b01e9`
+的剩余 4 个提交：
+
+- **固件产物统一命名**（`e4467ff`）：`<机型>-<模组插件>-<YY.MM.DD>-<固件类型>.<扩展名>`，
+  自用变体的模组段由中文「自用」改为 ASCII `SelfUse`（`H5000M-SelfUse-26.11.10-sysupgrade.bin`，
+  旧格式 `H5000M-.-sysupgrade.bin` 不再产生）；Release 资产同步收紧。
+- **保留 SHA256 校验资产**（`09f7859`）：按重命名后的固件名重新生成
+  `<固件名>.sha256`，`luci-app-online-upgrade` 下载后可直接校验。
+- `61b01e9` 仅为项目主页移动端排版，不影响构建。
+
+### 本仓库的适配：在线升级源必须指向本仓库
+
+`Scripts/OnlineUpgradePreset.sh` 的默认值是 `LianXia233/OpenWRT-CI`，而本仓库的
+Release 发在 `doraiba/OpenWRT-CI`。不改这一行会有两种坏结果：自用变体的
+`SelfUse` 资产在上游根本不存在，表现为「检查更新一直失败」；若上游恰好有同名
+资产，则可能把别人的固件装到本机。因此在 `WRT-CORE.yml` 顶层 env 增加：
+
+```yaml
+ONLINE_UPGRADE_SOURCE_REPO: doraiba/OpenWRT-CI
+```
+
+### 冲突处理
+
+`CHANGELOG.md` 双方条目全部保留（本条在前，11-09 三条在后）；`README.md` 保留
+bandix / oaf / podman / taygedo 四行并补 `online-upgrade` 一行。
+
+
 ## [2026-11-10] 保留 SHA256 校验资产并按重命名后的固件名重新生成
 
 ### 背景
@@ -136,6 +176,95 @@
 ### 兼容性
 
 新 `firmware_pattern` 不匹配旧格式资产，**需要重新编译一次对应归组**，在线升级插件与下载页才会看到新产物；历史 Release 由 `Auto-Clean` 按既有轮换策略自然淘汰。`WRT_TAG_GROUP` / `Tag` 归组规则未变，`Auto-Clean.yml` 无需改动。
+
+## [2026-11-09] 风扇内核下限 96 → 90（≈35%），并给出静音曲线适配建议
+
+用户要求再低一点。`Scripts/fan/dt-fan-levels.sh` 追加的覆盖改为
+`cooling-levels = <0 90 192 255>`，幂等标记同步改为 `h5fan-level-90`，
+`WRT-CORE.yml` 的编译前断言也跟着改成 `<0 90 192 255>`（断言丢了照样编译全绿，
+只在设备上表现为「静音模式还是 50%」，所以必须硬校验）。
+
+**静音曲线怎么适配**（当前 `20:0,35:0,40:37,55:50,70:60,85:75,95:100`）：
+
+- 下限 90/255 ≈ 35.3%；状态 1 由守护进程的兜底阈值 38 ℃ 触发（DT trip 是 40 ℃，
+  但守护进程解析 trip 时用了 `trip-point` 前缀过滤，MTK 的 crit/hot/active-* 全都
+  匹配不到，只能走 38/83/113 兜底，详见设备实测）。
+- 38 ℃ 时静音曲线只有 22%（57）→ 被抬到 90；曲线在 39.8 ℃ 涨到 35% 后接管。
+  也就是说仍有 38~39.8 ℃ 一段 35% 的平坦段，听感上比原来的 37.6% 平台更轻。
+- 想让钳位彻底无感，把低段改成 `20:0,35:0,38:36,55:50,70:60,85:75,95:100`：
+  38 ℃ 即为 36%（91）> 90，下限永不生效；40 ℃ 约 37.6%（96），与现在的曲线
+  几乎重合，55 ℃ 以后完全不变。
+- 高温段仍有一处 2 ℃ 的夹持：状态 2 的兜底阈值 83 ℃ 对应 192（75%），而曲线
+  85 ℃ 才到 75%，83~85 ℃ 会被抬到 75%。要消掉就把 `85:75` 改成 `83:76`，
+  代价是 83 ℃ 起就满 76%。这个差异只有 1~2 个百分点，通常不必动。
+
+## [2026-11-09] 撤销 LAN 公网 IPv6 前缀修复补丁（上游已修复根因）
+
+真机复核（刷入上游自用版 `r0-8e4a3ef`）确认问题已由上游解决，本仓库那套
+`ip6class` / `ip6assign` 修正不再需要，且其中一段会与 router-tool 抢配置：
+
+| 项 | 上游固件（可正常出公网 IPv6） | 当初出问题时 |
+|---|---|---|
+| `network.lan.ip6assign` | `60` | `60` |
+| `network.lan.ip6class` | 不存在 | `'wan6' 'local'` |
+| `br-lan` 公网地址 | `2408:8445:511:2be2::1/64` | 仅 `fe80::` |
+| IPv6 默认路由 | 有（经 `eth2`） | 无 |
+
+根因仍是 `ip6class` 白名单只认 `wan6`、实际承载前缀的是 `MT5700Mv6`，前缀被过滤；
+`ip6assign=60` 从来不影响 —— 上游只委派 /64 时 netifd 会把整条 /64 挂到 br-lan。
+
+上游的两处修改（同一份 `VIKINGYFY/immortalwrt` 源码）：
+
+- router-tool 不再写 `network.lan.ip6class='wan6' 'local'`（`/rom` 全盘仅迁移脚本
+  还提到该键）；
+- 新增 `uci-defaults/90-router-tool-migrate`，专门删除旧值：
+  `if (!uci.delete('network','lan','ip6class')) die('Cannot remove legacy IPv6 prefix filter')`，
+  只删 router-tool 自己写过、未被用户改过的 `['wan6','local']`，AP 快照一并清理。
+  该文件名历史上不存在，overlay 里没有 whiteout，故「保留配置刷机」首启也会执行。
+
+本仓库的处理：
+
+- 删除 `Scripts/ipv6/98-ipv6-prefix`、`Scripts/ipv6/ipv6-prefix-fix` 及
+  `Scripts/Handles.sh` 里对应的两路注入（uci-defaults + `S19` init 脚本）；
+- 顺带去掉「`ip6assign` 小于 64 就改 64」这段：它已被证明无必要，而 router-tool 的
+  state 把 `lan.ip6assign=60` 当作自己托管的期望值、随 `interface.*` 事件 reload
+  回写，我们的 `S19` 改 64 会被它改回 60，形成来回拉扯；
+- README 目录树同步删除这两行。
+
+若以后上游又把 `ip6class` 写回（例如 router-tool 回退该改动），表现为 LAN 只有
+`fe80::`、`logread | grep odhcpd` 出现 `ra_lifetime 0`，届时再按本条记录加回即可。
+
+## [2026-11-09] 同步上游：在线升级全机型内置 + Rust 统一走官方 SDK + 初始化环境容错
+
+上游 `93a33a4..7441952`（14 个提交）的主要变化：
+
+- **全机型内置 `luci-app-online-upgrade`**：新增 `Scripts/Packages-OnlineUpgrade.sh`
+  与 `Scripts/OnlineUpgradePreset.sh`，按 `WRT_DEVICE` / `WRT_TAG_GROUP` 生成升级源
+  预设；`Settings.sh` 对全部配置统一选中该包；
+- **Rust 后端统一走官方 Rust SDK 交叉编译**：新增 `Scripts/Build-Rust-Prebuilt.sh`，
+  接入 cargo 注册表与产物双层缓存；
+- **初始化编译环境容错**：apt 镜像按真实吞吐择优、有界重试、步骤硬超时；
+- **`luci-app-mt5700` 的 ring 交叉链接改走 `.cargo/config.toml`**：改用
+  `<arch>-openwrt-linux-musl-gcc` 作链接器，不再依赖全局 `RUSTFLAGS`；
+- `luci-app-taygedo` 改为配置驱动 + 源码交叉编译（`Packages-Taygedo.sh` /
+  `Build-Taygedo.sh`）。
+
+本仓库的处理：
+
+- `Scripts/Packages.sh` 的 `SETUP_RUST_FOR_MT5700` **采纳上游方案**，删掉我们早前
+  「sed 注入包内 `src/Makefile` 的 RUSTFLAGS」那套：上游用 crate 目录下的
+  `src/rust/.cargo/config.toml`，`luci.mk` 的 `$(CP) ./src/*` 会整目录递归拷贝，
+  `.cargo` 随之进入 `PKG_BUILD_DIR`，作用域同样只限本包，且不碰 feeds 的
+  `rust/host`（避免了当初 podman 编译时 `rust-lld` 找不到 `-lgcc_s` 的死法）；
+- `luci-app-taygedo` 只并入机制、**不开启**：配置里不写
+  `CONFIG_PACKAGE_luci-app-taygedo=y`，`WRT_TAYGEDO=false`，导入 / 校验 / 编译三个
+  步骤自动跳过（`taygedo-rs` 的 8787 与 `bandix-plus` 默认 API 端口冲突）；
+- Release 分组说明与 README 的「自用」描述从「NetMonitor + Taygedo」改为
+  「NetMonitor + Podman」，与产物实情一致。
+
+冲突处理：`Scripts/Packages.sh` 取上游；`README.md` 保留 bandix/oaf/podman 三行并补
+`online-upgrade`，taygedo 行标注「本仓库默认未开启」；`CHANGELOG.md` 双方条目全部
+保留（上游 11-06~11-08 在前，本仓库 11-02/11-03 在后）。
 
 ## [2026-11-08] 全机型内置 `luci-app-online-upgrade` 并按机型预设升级配置
 
@@ -493,6 +622,90 @@ runner）整段只用 2 分 53 秒，`upstream rc=0`。结论：托管 runner �
   （run 42215163749，验证后已删除该探针）。
 - 定时编译工作流只由 `workflow_run`（自动清理完成）与 `workflow_dispatch`
   触发，普通 PR 不会触发整条构建；守护逻辑的等效验证是下一次定时运行。
+## [2026-11-03] 同步上游：luci-app-taygedo 改为配置驱动 + Rust 源码交叉编译
+
+上游三个提交（`dd5663b` `4d3f405` `ddba852`）把 `luci-app-taygedo` 从
+NETMONITOR 脚本里剥离，改为**配置驱动**：任何 `Config/*.txt` 写了
+`CONFIG_PACKAGE_luci-app-taygedo=y` 就自动导入，与机型名无关；后端也改为
+**源码交叉编译** Rust（复用 AirPi 的 rustup + OpenWrt staging_dir 工具链，
+避免连 rustc 一起编 1.5~3 小时），源码编译不可用时才回退 Release 预编译资产。
+
+已并入：`Scripts/Packages-Taygedo.sh`、`Scripts/Build-Taygedo.sh`、
+WRT-CORE 里的导入 / 选中校验 / 后端编译三个步骤，以及由配置内容推导的
+`WRT_TAYGEDO` 开关。
+
+**本仓库仍未开启该包**——`Config/H5000M-WIFI-YES-NETMONITOR.txt` 里那行保持
+注释状态：`taygedo-rs` 常驻监听 `0.0.0.0:8787`，与 `H5000M-EXTRA.txt` 选中的
+`luci-app-bandix-plus` 默认 API 端口冲突，会让后者开机 bind 失败并进入 procd
+crash loop（LuCI 显示 "bandix-plus is not running"）。因此 `WRT_TAYGEDO=false`，
+三个 taygedo 步骤自动跳过，本仓库产物与 `自用-26.11.02` 功能一致。
+
+冲突处理：
+
+- `WRT-CORE.yml`：保留我们的 netmonitor / podman 断言与风扇下限断言，并入上游
+  的 taygedo 导入步骤与选中校验步骤，步骤顺序仍满足「导入早于 defconfig、
+  编译晚于 defconfig」；
+- `Config/H5000M-WIFI-YES-NETMONITOR.txt`：保留 CA 证书库段，并入上游 taygedo
+  说明段（CONFIG 行按上面理由注释）；
+- `Scripts/Packages-NetMonitor.sh`：采纳上游「taygedo 已拆分为独立脚本」的描述，
+  并保留 8787 端口冲突这条历史结论；
+- `README.md`：保留 bandix-plus / oaf / podman 三行，补 taygedo 一行并标注
+  「配置驱动，本仓库默认未开启」。
+
+## [2026-11-02] 修复：静音模式风扇仍输出 50%（内核 cooling-map 下限顶住曲线）
+
+### 现象
+
+静音曲线已经改成 `20:0,35:0,40:40,55:42,70:60,85:75,95:100`，CPU 42 ℃ 时风扇
+仍然稳定在 50%，噪音明显。`h5000m-fancontrol status json` 直接给出矛盾点：
+
+```
+requested_pwm=102 (40%)  target_pwm=128 (50%)  reason=auto+kernel-floor
+floor_pwm=128  owner=shared  kernel_floor_applied=true
+basis="conservative fallback thresholds (38/83/113 C) selected state 1"
+```
+
+曲线算出来是 40%，被内核安全下限抬到 50% —— 所以调曲线、改手动模式都没用
+（手动模式同样过 `apply_floor`）。
+
+### 根因
+
+不是曲线写错，是设备树把风扇的一半所有权留给了内核 governor：
+
+1. stock `mt7987.dtsi`（H5000M 的板级 dts 直接 include 它）的
+   `cpu-thermal/cooling-maps` 里有 `cpu-passive` / `cpu-active-low` /
+   `cpu-active-high` 三条映射直接指向 `<&fan>`；
+2. `pwm-fan/cooling-levels = <0 128 192 255>`，**state 1 就是 128/255 = 50%**；
+3. CPU 42 ℃ 已越过 `active-low`（40 ℃）→ state 1 → 内核要求至少 50%；
+4. 控制器读 trip 用 `trip-point*` 前缀，而 stock 命名是
+   `active-high/active-med/active-low/hot/crit`，phandle 匹配一律落空，
+   于是退回 38/83/113 保守阈值 —— 结果同样落在 state 1。
+
+即：**下限不是 UCI 选项，改不了；它来自 cooling-map 与 cooling-levels 的乘积**。
+
+### 修复
+
+只改一档：构建前给 H5000M 的**板级** dts 追加（`Scripts/fan/dt-fan-levels.sh`，幂等）：
+
+```dts
+&fan {
+	cooling-levels = <0 96 192 255>;
+};
+```
+
+第一档 128（50%）→ 96（96/255 ≈ 38%），其余三档与所有 trip 都不动：
+
+- 40~85 ℃ 的内核下限变成 38%，静音曲线写 40% 时算出来 102 > 96，不再被夹；
+- 85 ℃ 的 192（75%）、115 ℃ 的 255（100%）两级兜底，以及 hot(120) /
+  critical(125) 与 `cpu-active-hot` 的 CPU 降频保护，全部保持原厂行为；
+- 相比「删掉三条 cooling-map 让控制器独占」（floor 直接到 0），这个改法只覆盖
+  一个属性，内核仍是这路风扇的所有者之一，语义最接近原厂，风险也最小。
+
+`cooling-levels` 本体在 `mt7987.dtsi`，被所有 MT7987 板子共享，覆盖写在本机型的
+板级 dts 里，其它机型不受影响。这里不 `patch -p1` 而是追加式写入：补丁依赖 dts
+上下文行，上游一改 dts 就 `Hunk #1 FAILED` 中断整包编译；追加只依赖节点与属性名，
+且带幂等标记。workflow 增加断言（标记 + `<0 96 192 255>` 双重匹配），补丁丢失时
+在下载阶段直接报错，不再「编译全绿、设备上很吵」。
 
 ## [2026-10-31] 默认主题 vantage 补齐：Aurora 保留可选 + 修复默认样式不生效
 
@@ -626,6 +839,66 @@ NAT-PMP 端口自动映射）。本仓库作为其 fork，同步该配置，使�
 - aurora 切回方法：将各工作流的 `WRT_THEME` 与 `Settings.sh` 的兜底默认值
   改回 `aurora` 即可，主题源与菜单样式修复均已在位。
 
+## [2026-10-27] 修复：保留配置刷机后 LAN 公网 IPv6 又消失（uci-defaults 被 overlay whiteout 遮挡）
+
+### 现象
+
+`98-ipv6-prefix` 的判定条件修好（`b5825a4`）并重新出固件后，刷机仍然没有公网
+IPv6：`br-lan` 只有 `fe80::`，`network.lan` 依旧是板级默认的
+`ip6assign='60'` + `ip6class='wan6' 'local'`。
+
+### 根因
+
+不是脚本逻辑问题，是 **uci-defaults 在「保留配置刷机」这条路径上根本不会被执行**：
+
+1. sysupgrade 勾选保留配置时 `/overlay` 整个保留（不是重新生成），上一版固件
+   里跑过并自删的 uci-defaults 在 overlay 上层留下 whiteout
+   （`c--------- 0,0` 的字符设备）；
+2. 新固件把修好的脚本放进 `/rom/etc/uci-defaults/`，但同名 whiteout 在合并
+   视图里把 `/rom` 的版本遮住，`/etc/uci-defaults` 里看不到它；
+3. `/etc/init.d/boot` 的实现只是 `ls /etc/uci-defaults` 后逐个 source，
+   看不见的条目自然不会执行 —— 脚本连「跑一次然后失败」的机会都没有。
+
+真机证据（刷入 `a61191d` 后）：同目录同前缀的三个脚本行为分叉 ——
+`98-podman-storage` 是本版才新增的（overlay 里没有历史 whiteout），它正常
+执行了（`graphroot` 已改到 `/overlay/containers/storage`、`sysupgrade.conf`
+已追加、`/overlay/containers` 已建）；而 `98-ipv6-prefix` / `98-podman-network`
+上一版就存在并自删过，本次完全没跑。差异只能用 whiteout 遮挡解释。
+
+### 修复
+
+新增 `Scripts/ipv6/ipv6-prefix-fix`（init 脚本，`START=19`），由 `Handles.sh`
+的 `*H5000M*` 段注入为：
+
+- `files/etc/init.d/ipv6-prefix-fix`
+- `files/etc/rc.d/S19ipv6-prefix-fix`（软链，随镜像一起落盘，不依赖 `enable`）
+
+脚本本体在 `/rom`、启动链在 `/rom`，都不经过 uci-defaults 的自删机制，
+**每次开机都重跑**，配置被谁改回去都能自愈。`S19` 早于 `network`（`S20`），
+改完配置再让 network 读取。
+
+判据比原来更保守：
+- `ip6assign` 只在「数字且小于 64」时收敛到 64，空值/非数字不动
+  （保留「LAN 不要 IPv6」这类显式配置）
+- `ip6class` 只在**不含** `MT5700Mv6` 时删除，已含正确类名的保持原样
+
+原 `98-ipv6-prefix` 保留，覆盖「全新刷机（不保留配置）」首次开机即修好的路径。
+
+### 真机验证
+
+把 `ip6assign` 改回 `60`、`ip6class` 加回 `wan6 local` 后重启：
+
+```
+重启后 network.lan.ip6assign='64'      ← 启动链自动纠正
+       ip6class                    ← 已删除
+br-lan 2408:8445:590:b91::1/64 scope global
+ra_lifetime 告警：本次开机 1 次（前缀下发前的瞬时），修复前为 16 次
+路由器 ping6 2400:3200::1 → 27ms
+```
+
+另测两条分支：`ip6class` 含 `MT5700Mv6` 时保留不删、只修 `ip6assign`；
+重复执行无任何输出（幂等）。
+
 ## [2026-10-27] 修复 firewall4 客制补丁失配导致的编译中断（新增补丁上下文自动重定基）
 
 ### 背景
@@ -687,6 +960,191 @@ ERROR: package/network/config/firewall4 failed to build.
 - 六个 H5000M 配置（WIFI-YES / NETMONITOR / FM350 / NETWIZ-MT5700 /
   NETWIZ-MT5700M / NETWIZ-FM350）均选中该插件，统一生效；
 - 非 H5000M 机型（AP3000M / X86 / FM350 变体）构建路径不受影响。
+## [2026-10-19] 修复：局域网访问 Podman 映射端口不通（补 fw4 zone + 跨 zone 转发）
+
+### 现象
+
+`podman run -d -p 8080:80 nginx` 之后容器正常（`podman ps` 在、`podman exec` 里 curl
+`127.0.0.1` 正常），但从局域网访问 `http://192.168.10.1:8080` 无响应。
+
+### 根因
+
+netavark 的 DNAT 是生效的——`nft list table inet netavark` 能看到 `dnat ip to 10.88.0.x:80`。
+问题在 DNAT **之后**：目的地址已从 `192.168.10.1` 变成 `10.88.0.x`，包不再发给路由器自身，
+而是要走 **FORWARD**。`podman0` 不属于任何 fw4 zone，fw4 的 forward 链对未归属网络的转发
+默认丢弃，包在路由器内部就没了。
+
+注意这不是「访问路由器端口」：`INPUT` 链根本不参与，改 `input` 策略没有任何用。
+
+### 修复
+
+`Scripts/podman/98-podman-network` 增加第三段（幂等，按 zone 名 / device / src-dest 配对判重）：
+
+1. 建 zone `podman`，**按 `device podman0` 绑定**，input / output / forward 全 `ACCEPT`：
+   - 用 device 而不是「建 OpenWrt 接口 + zone 引用 network」：后者会让 netifd 接管
+     `podman0` 这座桥，`/etc/init.d/network reload` 或接口抖动都会把桥拆掉重建，
+     正在跑的容器直接断网。netavark 与 netifd 共存的最省事方式就是让 netifd 完全不管它。
+   - `input ACCEPT`：容器可以访问路由器自身服务（LuCI、代理端口等）。
+2. 补三条跨 zone 转发：
+   - `lan → podman`：局域网访问 `-p` 映射端口
+   - `podman → wan`：容器出网
+   - `podman → lan`：容器访问 NAS / 其他内网设备
+3. 刻意不建 `wan → podman`，容器端口不暴露到公网。
+
+> zone 的 `forward` 选项替代不了上面三条。fw4 为每个 zone 生成的 `forward_<zone>` 链尾部是
+> `jump <zone.forward>_to_<zone.name>`，只匹配本 zone 的出口设备，因此它管的只是 zone 内部
+> 接口之间的转发；跨 zone 一律需要 `config forwarding` 段（见 firewall4 的
+> `templates/ruleset.uc` 中 `chain forward_<zone>` 构造）。误以为「forward ACCEPT 就能访问
+> NAS」会漏掉 `podman → lan`。
+
+已存在承载 `podman0` 的 zone（名字叫 podman 还是别的、手工建的都算）时，不改它的策略，
+只补缺失的 forwarding；同向 forwarding 已存在则跳过。
+
+### 验证
+
+```sh
+nft list chain inet fw4 forward | grep -i podman    # 应看到 iifname "br-lan" ... accept_to_podman
+curl -I http://192.168.10.1:8080                    # 局域网客户端执行
+```
+
+> 从路由器本机 curl `192.168.10.1:8080` 可能仍不通：本机出流量走 OUTPUT，不经过
+> prerouting 的 DNAT 规则。验证容器本身请直连 `10.88.0.x`。
+
+## [2026-10-19] 新增：Podman 容器网络开箱可用（netavark nftables 驱动 + dnsmasq 避让 53）
+
+### 现象
+
+自用固件里 podman 与 luci-app-podman 都在，界面能打开、镜像能拉，但创建容器第一步即失败：
+
+```
+Error: netavark: iptables: No such file or directory (os error 2)
+```
+
+### 根因
+
+netavark 的默认防火墙驱动是 **iptables**，它会直接 exec `/usr/sbin/iptables` 写 NAT 规则。
+本固件走 fw4（纯 nftables），镜像里既没有 `iptables` 也没有 `iptables-nft` 二进制
+（`Config/GENERAL.txt` 只选 `kmod-nft-*`），于是第一条规则就 `ENOENT`。不是 podman /
+veth / bridge 的问题，是防火墙后端选错了。
+
+紧跟其后的第二个坑（同一批上报见 openwrt/packages#25730）：aardvark-dns 要 bind
+`10.88.0.1:53`（podman 默认网络网关），而 dnsmasq 监听所有已配置地址的 53 端口：
+
+```
+aardvark-dns failed to start: failed to bind udp listener on 10.88.0.1:53
+: IO error: Address in use (os error 98)
+```
+
+### 修复
+
+新增 `Scripts/podman/98-podman-network`，由 `Scripts/Handles.sh` 在 `WRT_CONFIG` 含
+`NETMONITOR` 时注入到 `files/etc/uci-defaults/`，设备**首次开机自动**完成三件事：
+
+1. 写 `/etc/containers/containers.conf.d/50-netavark-nftables.conf`，把驱动切成 netavark
+   原生的 `nftables`（内部调 `nft -j`，fw4 依赖的 nftables-json 已具备）。规则落在独立的
+   `inet netavark` 表，与 `inet fw4` 互不干扰；用 `conf.d` 片段而非直接改
+   `containers.conf`，包升级不会覆盖。
+2. `uci add_list dhcp.@dnsmasq[0].notinterface='podman0'`，让 dnsmasq 让出 10.88.0.1:53
+   （podman0 此刻尚不存在，dnsmasq 对不存在的接口名直接忽略，安全）。
+3. 仅当 `net.ipv4.ip_forward` 确为 0 时才补一条持久化 sysctl，不改动既有转发策略。
+
+未采用「装 `iptables-nft` 兼容层」方案：那需要额外 `kmod-nft-compat`，且 iptables 与 fw4
+各写一套 nft 表，多一层兼容壳；既然自编固件，直接用 netavark 原生 nftables 驱动更干净。
+
+`WRT-CORE.yml` 的自用校验步骤同步加了硬断言：`files/etc/uci-defaults/98-podman-network`
+缺失或不可执行即 `exit 1`，避免「编译全绿、设备上跑不起来」这类最难查的失败。
+
+### 验证
+
+```sh
+podman run --log-level=debug --rm docker.io/library/busybox date 2>&1 | grep -i firewall
+# 期望：[INFO netavark::firewall] Using nftables firewall driver
+nft list table inet netavark     # 规则表已生成
+podman run --rm -it docker.io/library/busybox ping -c1 223.5.5.5   # 容器出网
+```
+
+> 修正（见上一条 2026-10-19 记录）：当时以为「LAN 内访问 `-p` 发布端口正常」，实测不成立。
+> DNAT 之后目的地址已是 10.88.0.x，走 FORWARD，`podman0` 不在任何 zone 里就会被 fw4 丢弃。
+> 局域网访问必须补 zone 与 `lan → podman` 转发，已并入 98-podman-network。WAN 访问仍然
+> 默认不放行。
+
+## [2026-10-19] 新增：H5000M 机型专属插件层（Bandix Plus / OpenAppFilter）
+
+### 背景
+
+两者原先写在 `Config/MT5700.txt`（MT 方案共用层），会让 AP3000M / X86 的 MT5700 变体
+以及 NetWiz-MT5700 一并继承 —— H5000M 专属插件被塞进其它机型。现在抽成
+`Config/H5000M-EXTRA.txt`，由 `WRT-CORE.yml` 在 `WRT_CONFIG` 以 `H5000M` 开头时追加；
+`Scripts/Packages.sh` 的取包逻辑同样按前缀加条件，非 H5000M 构建不再克隆这些仓库。
+
+### 改动
+
+- **Bandix Plus**（`bandix-plus` + `luci-app-bandix-plus` + 中文包）：多网口流量监控，
+  后端是上游预编译 musl 二进制，BPF 采集。前端仓库根目录与包目录同名，`UPDATE_PACKAGE`
+  的 pkg/name/all 三种模式都会互相覆盖，故手工提取。
+- **OpenAppFilter**（`kmod-oaf` + `appfilter` + `luci-app-oaf` + 中文包）：家长控制 /
+  应用过滤三件套。关键坑：feeds 里已有旧版 `net/open-app-filter`，同名包会让 OpenWrt 报
+  Duplicate package name，并在 `make defconfig` 阶段把整组符号连依赖一起丢弃（表现为
+  「构建全绿、固件里既没界面也没 oafd」），因此 `INSTALL_OPENAPPFILTER` 先清 feed 源目录
+  与 install 生成的悬空链接，再平铺上游三个一级包目录。
+- 两处都补了 CI 硬断言：包目录存在 + `.config` 符号已选中，缺失即红。
+
+## [2026-10-19] 移除：luci-app-taygedo（塔吉多每日签到）
+
+### 背景
+
+自用配置不再内置 `luci-app-taygedo`：
+
+- 本身不使用；
+- 其 `taygedo-rs` 常驻监听 `0.0.0.0:8787`，与 `luci-app-bandix-plus` 的默认 API 端口
+  冲突，会让 bandix-plus 开机 bind 失败并进入 procd crash loop（LuCI 显示
+  "bandix-plus is not running"）。
+
+### 改动
+
+`Config/H5000M-WIFI-YES-NETMONITOR.txt` 的包与注释、`Scripts/Packages-NetMonitor.sh`
+的导入段（约 130 行，含版本对齐自检）、`WRT-CORE.yml` 的导入 / 校验步骤、
+`H5000M-NETMONITOR-AUTO.yml` 的命名与注释、README 的变体表与插件矩阵。
+
+## [2026-10-18] 修复：全局 RUSTFLAGS 污染 feeds rust/host，导致带 podman 的构建失败
+
+### 现象
+
+真编译 `run 39123972766` 在第 24 步「编译固件」失败，栈顶是：
+
+```
+make[2]: *** [package/Makefile:186: package/feeds/packages/rust/host/compile] Error 1
+error: linking with `rust-lld` failed: exit status: 1
+  = note: rust-lld: error: unable to find library -lgcc_s
+          rust-lld: error: unable to find library -lutil / -lrt / -lpthread / -lm / -ldl / -lc
+error: could not compile `generic-array` (build script) due to 1 previous error
+```
+
+### 根因
+
+`Scripts/Packages.sh` 的 `SETUP_RUST_FOR_MT5700` 把
+
+```
+RUSTFLAGS=-C link-self-contained=yes -C linker=rust-lld
+```
+
+写进了 `GITHUB_ENV`，于是整个「编译固件」步骤（以及其中的每个包）都继承它。
+此前配置里唯一的 Rust 消费者是 `luci-app-mt5700`（包内 `src/Makefile` 直接调宿主
+cargo），所以从未暴露；这次加入 podman 后，`netavark` / `aardvark-dns` 触发了
+feeds 的 `rust/host` 构建 —— 宿主 target（`x86_64-unknown-linux-gnu`）用 rust-lld
+做链接器、又要求 self-contained，自然找不到宿主的 glibc/gcc_s，直接失败。
+
+与 podman 自身无关：失败发生在 18 分钟时的 `rust/host`，不是 `podman` / `netavark`。
+
+### 修复
+
+- `Scripts/Packages.sh`：不再向 `GITHUB_ENV` 写 `RUSTFLAGS`，改为在克隆后把 env
+  前缀直接注入 `luci-app-mt5700/src/Makefile` 的 cargo 命令行：
+  `RUSTFLAGS="-C link-self-contained=yes -C linker=rust-lld" cargo build ...`。
+  作用域精确到这一次调用，feeds 的 `rust/host` 不再受影响；注入后用 grep 自检，
+  失败即 `exit 1`（避免「静默没注入 → 交叉编译失败」）。
+- 未采用 `src/rust/.cargo/config.toml` 方案：`luci.mk` 的 `Build/Prepare` 是
+  `$(CP) ./src/*`，glob 不匹配隐藏目录，`.cargo` 不会被拷进 `PKG_BUILD_DIR`。
 
 ## [2026-10-07] 暂时禁用 MT5700M 变体编译：模组方案不稳定，暂停全部 MT5700M 入口
 
