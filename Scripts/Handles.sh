@@ -295,6 +295,37 @@ if [ -d "$PKG_PATH/luci-app-mini-diskmanager" ]; then
 	fi
 fi
 
+#luci-app-h5000m-fancontrol 曲线点编辑器修正
+# 原版把编辑器结果固定写进 curve_custom，而控制器只读 CURVE_OPTION[curve] 指向的
+# 那一条：选 Balanced/Quiet 时拖点、保存都不生效，界面却显示已改；且首次进入
+# 「Fan curve」页编辑器是空列表（editorFromSpec 只被两个「恢复默认」按钮调用）。
+# 补丁让编辑器编辑当前选中的档案、切档案时刷新，并拒绝写空曲线（空曲线会触发
+# failsafe 全速）。只改前端 JS，不动 Rust 控制器与 UCI 结构。
+if [ -d "$PKG_PATH/luci-app-h5000m-fancontrol" ]; then
+	echo " "
+	FANCTL_PATCHER="$GITHUB_WORKSPACE/Scripts/patches/fancontrol-curve-editor.py"
+	if [ -f "$FANCTL_PATCHER" ]; then
+		# 上游若改了这段前端，脚本会非零退出，让构建在导入插件阶段就失败，
+		# 而不是静默装回一个「改了不生效」的界面。
+		python3 "$FANCTL_PATCHER" "$PKG_PATH/luci-app-h5000m-fancontrol"
+		echo "h5000m-fancontrol curve editor patched!"
+
+		# 出厂「均衡」曲线 40℃ 那一档 50% → 35%。待机温度就在 40~43℃，原来
+		# 等于开机半速吹；35% 正好落在内核 cooling-levels 的 90 下限上，是能听到
+		# 的最低档。模式、静音/自定义档案、55℃ 以上高温段一律不动。
+		# 之所以要固化：curve* 属于 /etc/config，刷机不勾「保留配置」就回默认值。
+		FANCTL_PROFILE="$GITHUB_WORKSPACE/Scripts/patches/fancontrol-default-profile.py"
+		if [ -f "$FANCTL_PROFILE" ]; then
+			python3 "$FANCTL_PROFILE" "$PKG_PATH/luci-app-h5000m-fancontrol"
+			echo "h5000m-fancontrol balanced curve: 40C -> 35%"
+		else
+			echo "WARNING: $FANCTL_PROFILE not found; 40℃ 仍会是 50%" >&2
+		fi
+	else
+		echo "WARNING: $FANCTL_PATCHER not found; 曲线点编辑器仍会只写 curve_custom" >&2
+	fi
+fi
+
 #修复TailScale配置文件冲突
 FEEDS_PACKAGES="$PKG_PATH/../feeds/packages"
 TS_FILE="$(find "$FEEDS_PACKAGES" -maxdepth 3 -type f -wholename '*/tailscale/Makefile' -print -quit 2>/dev/null)"
@@ -420,6 +451,28 @@ case "$WRT_CONFIG" in
 		echo "Podman storage uci-defaults injected!"
 	else
 		echo "WARNING: $PODMAN_ST_UD_SRC not found; podman 镜像将存放在 tmpfs，重启丢失" >&2
+	fi
+	;;
+esac
+
+#H5000M 系列：风扇内核下限 + 站点相关注入
+# IPv6 前缀下发修复已于 2026-11-09 撤销：上游把根因修掉了 —— router-tool 不再写
+# network.lan.ip6class='wan6' 'local'，并新增 uci-defaults/90-router-tool-migrate
+# 清理旧值（详见 CHANGELOG）。继续保留我们那套会与 router-tool 抢 ip6assign。
+case "$WRT_CONFIG" in
+*H5000M*)
+	# 风扇内核下限：stock DT 把 pwm-fan 挂在 cpu-thermal 的 cooling-map 上，
+	# state 1 对应 cooling-levels[1]=128，即内核强制 50% 下限，静音曲线写 40%
+	# 也会被 apply_floor 抬回 50%（实测 requested 102 → target 128，reason
+	# auto+kernel-floor）。这里把第一档改成 90（≈35%），38~85 ℃ 的下限随之降
+	# 到 35%，85/115 ℃ 的 192/255 兜底与 hot/critical trip 全部保持原样。
+	# 详见脚本头注释（含静音曲线的适配建议）。
+	FAN_DT_SRC="$GITHUB_WORKSPACE/Scripts/fan/dt-fan-levels.sh"
+
+	if [ -f "$FAN_DT_SRC" ]; then
+		bash "$FAN_DT_SRC" "$(cd "$PKG_PATH/.." && pwd)" || exit 1
+	else
+		echo "WARNING: $FAN_DT_SRC not found; 静音模式风扇仍会被内核下限抬到 50%" >&2
 	fi
 	;;
 esac
