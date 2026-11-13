@@ -18,6 +18,36 @@ GitHub 自 2026-10-19 起把 `ubuntu-latest` 滚动迁移到 Ubuntu 26.04（预�
   补丁幂等，上游原生支持 26.04 后自动跳过。
 - apt 镜像探测的代号兜底由 `noble` 改为 `resolute`。
 
+## [2026-11-13] 固件时间戳改用编译时刻，修正在线升级误判「有新版本」
+
+刚刷进去的最新固件，`系统 → 在线升级` 仍提示「发现新版本 v26.11.13（当前
+26.11.12）」。查下来不是插件算错，是固件自报的「构建时间」本来就不对。
+
+判定链路（`luci-app-online-upgrade` 的 `rust/src/localver.rs`）：
+
+- 「本机版本」取的是发行标记文件的 **mtime**：遍历 `/etc/openwrt_release`、
+  `/etc/openwrt_version`，取修改时间；
+- 镜像里所有文件的 mtime 由 `include/image.mk` 的
+  `--mtime="@$(SOURCE_DATE_EPOCH)"` 统一写入；
+- `SOURCE_DATE_EPOCH` 来自 `scripts/get_source_date_epoch.sh`，默认是**源码 git
+  最后一次提交的时间**，不是编译时间。
+
+设备实测：`/etc/openwrt_release` 的 mtime 是 `2026-11-12 23:29:10`，与上游
+`0b433e6` 的提交时刻逐秒一致；而固件是 11-13 09:34 编译的，资产名里的日期
+（`TZ=UTC-8 date +%y.%m.%d`）也是 11-13 —— 两边不同源，于是只要上游当天没提交，
+最新固件就会被判成落后一版，并一直提示到上游再提交为止。
+
+修法：`Scripts/Handles.sh` 在编译前把编译时刻写进源码根的 `version.date`。
+这是上游给非 git 源码留的入口（`get_source_date_epoch.sh` 的 `try_version()`
+优先读它），不需要改编包模板、也不碰上游脚本。写入后 mtime 与
+`OPENWRT_BUILD_DATE="%B"` 同时变成编译时刻，版本戳与资产名重新同源。
+
+代价：`SOURCE_DATE_EPOCH` 每次构建不同，产物不再逐字节可复现（个人固件可接受）。
+已知边界：构建跨过零点时，写入时刻与打包时刻仍会差一天。
+
+> 附：此前有一版改 `os-release` 里 `%B` 的做法，已撤销 —— 插件不读那个字段，
+> 二进制里连 `OPENWRT_BUILD_DATE` 这个字符串都没有，改了也不生效。
+
 ## [2026-11-13] 风扇默认均衡曲线：40℃ 档 50% → 35%
 
 包出厂模板的 `curve_balanced` 是 `20:0,35:0,40:50,55:60,70:75,85:90,95:100`：

@@ -8,6 +8,27 @@ else
 	PKG_PATH="$(pwd)"
 fi
 
+#固件构建时间戳：把 SOURCE_DATE_EPOCH 钉成编译时刻
+# 为什么必须在这里钉：
+#   1) luci-app-online-upgrade 判断「本机版本」时读的是发行标记文件的 mtime
+#      （rust/src/localver.rs 遍历 /etc/openwrt_release、/etc/openwrt_version），
+#      不是 os-release 里的 OPENWRT_BUILD_DATE 字段 —— 该二进制里根本没有这个字符串；
+#   2) 镜像内所有文件的 mtime 由 include/image.mk 的 `--mtime=@$(SOURCE_DATE_EPOCH)`
+#      统一写入；
+#   3) SOURCE_DATE_EPOCH 来自 scripts/get_source_date_epoch.sh，默认取源码 git
+#      最后一次提交的时间，而不是编译时间。
+# 于是上游当天没提交时，刚编出来的最新固件会被判成「落后一版」并持续提示。
+# 该脚本的 try_version() 优先读 $TOPDIR/version.date（上游给非 git 源码留的入口），
+# 这里写一行编译时刻即可：不改编包模板、不碰上游脚本，mtime 与 %B 同时变对。
+if [ -n "${GITHUB_WORKSPACE:-}" ] && [ -d "$GITHUB_WORKSPACE/wrt/scripts" ]; then
+	BUILD_EPOCH="$(date +%s)"
+	printf '%s\n' "$BUILD_EPOCH" > "$GITHUB_WORKSPACE/wrt/version.date" ||
+		{ echo "ERROR: 写入 wrt/version.date 失败；在线升级会把最新固件误判成落后一版" >&2; exit 1; }
+	echo "source_date_epoch=${BUILD_EPOCH} ($(date -d "@${BUILD_EPOCH}" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '-')) -> wrt/version.date"
+else
+	echo "WARNING: ${GITHUB_WORKSPACE:-未设置}/wrt 不存在，跳过 version.date；在线升级可能误判版本" >&2
+fi
+
 #预置HomeProxy数据
 HP_DIR="$(find "$PKG_PATH" -maxdepth 1 -type d -name '*homeproxy*' -print -quit)"
 if [ -n "$HP_DIR" ]; then
