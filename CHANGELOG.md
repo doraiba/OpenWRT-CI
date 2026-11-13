@@ -1,4 +1,27 @@
 # 更新日志
+## [2026-11-13] 风扇默认均衡曲线：40℃ 档 50% → 35%
+
+包出厂模板的 `curve_balanced` 是 `20:0,35:0,40:50,55:60,70:75,85:90,95:100`：
+40℃ 给 50%（pwm 128），而 H5000M 待机就在 40~43℃，等于开机就半速吹。
+
+内核 DT 的 `cooling-levels` 第一档是 90（约 35%），低于它的请求会被硬件抬到
+90 —— 所以 40℃ 给 35% 正好落在硬件下限上，是「能听到的最低档」。
+
+只改这一处，不动整体策略：
+
+- 模式（`curve`）保持 `balanced`，默认行为与他人预期一致；
+- 静音档案（`curve_silent`）、自定义档案（`curve_custom`）保持包出厂值；
+- 55℃ 以上高温段完全不动，散热曲线与官方一致，不影响重载。
+
+`curve*` 属于 `/etc/config`，此前只在设备上调过、没进固件，所以只要 sysupgrade
+没勾「保留配置」，40℃ 就又会回到 50%。
+
+- 新增 `Scripts/patches/fancontrol-default-profile.py`：改编包内
+  `root/etc/config/h5000m_fancontrol` 模板，把 `curve_balanced` 的 40℃ 档由
+  50 改成 35，其余选项一字不动；按温度点定位而非整串替换，上游调整其它分段
+  不受影响；幂等，找不到 40℃ 点则非零退出，不让构建静默发出旧值；
+- `Scripts/Handles.sh`：在曲线编辑器补丁之后调用。
+
 ## [2026-11-12] 修复预检把补丁序列依赖误判为上游漂移（五条 VIKINGYFY 构建全红）
 
 ### 背景
@@ -27,6 +50,40 @@ Hunk #1 FAILED at 493. ... 2 out of 2 hunks FAILED
 
 - 仅影响预检步骤，`WRT-CORE.yml` 无需改动，固件内容、补丁语义与产物命名均不变；正常批次输出 `[info] 无需改动`；
 - 真正打不上的补丁仍然 `exit 1`（已用合成用例验证：目标行被上游删除时保持原补丁不变并非 0 退出）。
+
+## [2026-11-12] 修正风扇曲线点编辑器：编辑当前档案，而非写入不生效的 curve_custom
+
+### 背景
+
+设备上实测（`h5000m-fancontrol 3.2.0`，UCI schema v3）：44 ℃ 时风扇维持 pwm=114（44.7%），
+在 LuCI「Fan curve」页调整曲线点并保存后转速毫无变化。
+
+根因在 LuCI 前端 `htdocs/luci-static/resources/view/h5000m/fancontrol.js`：
+
+- `commitNodes()` 把编辑器结果固定写进 `curve_custom`，而控制器只读
+  `CURVE_OPTION[this.values.curve]` 指向的那一条。`curve=balanced` 时改的是
+  `curve_custom`，守护进程永远不读它，界面却显示已修改，也不给任何提示；
+- 同页「Effective curve」图按当前档案绘制，于是「图上没变、编辑器里的点变了」，
+  极易误判为「曲线没生效」；
+- `editorFromSpec()` 只在「恢复默认曲线」「恢复全部默认」两处被调用，首次进入该页
+  编辑器是空列表，必须点一次按钮才会出现曲线点。
+
+### 变更
+
+新增 `Scripts/patches/fancontrol-curve-editor.py`（在 `Scripts/Handles.sh` 导入插件后执行），
+只改前端 JS，不动 Rust 控制器与 UCI 结构：
+
+- 曲线点编辑器改为编辑**当前选中的档案**（Balanced → `curve_balanced`），面板标题追加档案名，
+  复用已有译文（`Fan curve` / `Quiet` / `Balanced` / `Performance` / `Custom`），不引入新词条；
+- 打开该页、切换档案、恢复默认后，用当前生效曲线重新填充编辑器；
+- 空曲线不再写回——空曲线会让控制器回落到 `fail_pwm`（255，全速）。
+
+### 兼容性
+
+- 补丁脚本幂等；已打过则跳过；
+- 上游若改动了这段前端导致锚点匹配失败，脚本非零退出，构建在「导入自定义插件」阶段
+  显式失败，不会静默装回有缺陷的界面；
+- 已验证：在 3.2.0 的真实源码上 8 处锚点全部唯一命中，二次执行跳过，`node --check` 通过。
 
 ## [2026-11-11] CI 增加磁盘空间预检与清理，避免 runner 写满导致编译中断
 
