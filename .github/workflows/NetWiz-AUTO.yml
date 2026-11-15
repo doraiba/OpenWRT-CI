@@ -25,11 +25,7 @@
 name: NetWiz 变体定时编译
 
 on:
-  # 每日定时自动编译（05:00 CST）。旧版本 Releases 由 WRT-CORE 在
-  # 本次固件发布成功后按分组清理，不再先清空再编译。
-  schedule:
-    - cron: 0 21 * * *
-  # 也可手动触发
+  # 仅手动触发：本 fork 已关闭每日定时编译（旧 Releases 由 WRT-CORE 在发布成功后按归组清理）
   workflow_dispatch:
     inputs:
       PACKAGE:
